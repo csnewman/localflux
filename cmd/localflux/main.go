@@ -2,15 +2,34 @@ package main
 
 import (
 	"log/slog"
+	"os"
 
-	"github.com/csnewman/localflux/internal/config"
+	"github.com/spf13/cobra"
 )
 
+var logger *slog.Logger
+
 func main() {
-	c, err := config.Load("localflux.yaml")
-	if err != nil {
-		panic(err)
+	rootCmd := &cobra.Command{
+		Use:   "localflux",
+		Short: "Simple and fast local k8s development",
+		Long: `
+Simple and fast local k8s development.
+See https://github.com/csnewman/localflux
+`,
+		SilenceUsage: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+				Level: slog.LevelInfo,
+			}))
+
+			return nil
+		},
 	}
 
-	slog.Info("Config", "c", c)
+	rootCmd.AddCommand(createClusterCmd())
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
 }

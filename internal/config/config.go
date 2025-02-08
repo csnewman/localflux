@@ -9,13 +9,18 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+type (
+	Config  = *v1alpha1.Config
+	Cluster = *v1alpha1.Cluster
+)
+
 var ErrUnknownVersion = errors.New("unknown version")
 
 type Wrapper struct {
 	Version string `json:"apiVersion"`
 }
 
-func Load(path string) (*v1alpha1.Config, error) {
+func Load(path string) (Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)

@@ -15,7 +15,7 @@ type Cluster struct {
 }
 
 type Minikube struct {
-	Name        string `yaml:"name"`
+	Profile     string `yaml:"profile"`
 	PortForward bool   `yaml:"portForward"`
 	Registry    string `yaml:"registry"`
 }
