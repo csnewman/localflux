@@ -1,0 +1,18 @@
+apiVersion: localflux/v1alpha1
+kind: Config
+defaultCluster: minikube
+clusters:
+  - name: minikube
+    minikube:
+      profile: dev1
+      portForward: true
+      registryAliases:
+        - example.invalid
+deployments:
+  - name: simple
+    images:
+      - image: example.invalid/hello
+        context: hello
+    kustomize:
+      context: deploy
+      namespace: demo
