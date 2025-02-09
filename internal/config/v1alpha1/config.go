@@ -3,19 +3,20 @@ package v1alpha1
 const Version string = "localflux/v1alpha1"
 
 type Config struct {
-	APIVersion     string     `yaml:"apiVersion"`
-	Kind           string     `yaml:"kind"`
-	DefaultCluster string     `yaml:"defaultCluster"`
-	Clusters       []*Cluster `yaml:"clusters"`
+	APIVersion     string     `json:"apiVersion"`
+	Kind           string     `json:"kind"`
+	DefaultCluster string     `json:"defaultCluster"`
+	Clusters       []*Cluster `json:"clusters"`
 }
 
 type Cluster struct {
-	Name     string    `yaml:"name"`
-	Minikube *Minikube `yaml:"minikube"`
+	Name     string    `json:"name"`
+	Minikube *Minikube `json:"minikube"`
 }
 
 type Minikube struct {
-	Profile     string `yaml:"profile"`
-	PortForward bool   `yaml:"portForward"`
-	Registry    string `yaml:"registry"`
+	Profile     string   `json:"profile"`
+	PortForward bool     `json:"portForward"`
+	Registry    string   `json:"registry"`
+	Addons      []string `json:"addons"`
 }

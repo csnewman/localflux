@@ -32,6 +32,8 @@ type Provider interface {
 
 	Start(ctx context.Context) error
 
+	Reconfigure(ctx context.Context) error
+
 	ContextName() string
 }
 
@@ -76,6 +78,10 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 
 	case StatusActive:
 		m.logger.Info("Cluster already running", "name", name)
+
+		if err := p.Reconfigure(ctx); err != nil {
+			return fmt.Errorf("failed to reconfigure: %w", err)
+		}
 
 	case StatusStopped:
 		m.logger.Info("Starting cluster", "name", name)
@@ -127,7 +133,7 @@ func (m *Manager) Provider(name string) (Provider, error) {
 
 	if cfg.Minikube != nil {
 		mc := NewMinikube(m.logger)
-		mp := NewMinikubeProvider(mc, cfg)
+		mp := NewMinikubeProvider(m.logger, mc, cfg)
 
 		return mp, nil
 	}
