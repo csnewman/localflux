@@ -1,5 +1,7 @@
 package v1alpha1
 
+import "github.com/fluxcd/pkg/apis/kustomize"
+
 const Version string = "localflux/v1alpha1"
 
 type Config struct {
@@ -28,8 +30,9 @@ type BuildKit struct {
 }
 
 type Deployment struct {
-	Name   string   `json:"name"`
-	Images []*Image `json:"images"`
+	Name      string     `json:"name"`
+	Images    []*Image   `json:"images"`
+	Kustomize *Kustomize `json:"kustomize"`
 }
 
 type Image struct {
@@ -38,4 +41,14 @@ type Image struct {
 	File      string            `json:"file"`
 	Target    string            `json:"target"`
 	BuildArgs map[string]string `json:"buildArgs"`
+}
+
+type Kustomize struct {
+	Context     string            `json:"context"`
+	IgnorePaths []string          `json:"ignorePaths"`
+	Namespace   string            `json:"namespace"`
+	Path        string            `json:"path"`
+	Components  []string          `json:"components"`
+	Substitute  map[string]string `json:"substitute"`
+	Patches     []kustomize.Patch `json:"patches"`
 }

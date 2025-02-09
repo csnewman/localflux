@@ -4,18 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/fluxcd/pkg/apis/kustomize"
 	"log/slog"
+	"time"
 
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/config"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	ociclient "github.com/fluxcd/pkg/oci/client"
+	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
 	"github.com/google/go-containerregistry/pkg/crane"
 	conname "github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/moby/buildkit/client"
 	"golang.org/x/sync/errgroup"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-var ErrNotFound = errors.New("deployment not found")
+var (
+	ErrNotFound = errors.New("deployment not found")
+	ErrInvalid  = errors.New("invalid deployment")
+)
 
 type Manager struct {
 	logger   *slog.Logger
@@ -31,12 +40,12 @@ func NewManager(logger *slog.Logger, cfg config.Config, clusters *cluster.Manage
 	}
 }
 
-func (m *Manager) Deploy(ctx context.Context, cluster string, name string) error {
-	if cluster == "" {
-		cluster = m.cfg.DefaultCluster
+func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) error {
+	if clusterName == "" {
+		clusterName = m.cfg.DefaultCluster
 	}
 
-	provider, err := m.clusters.Provider(cluster)
+	provider, err := m.clusters.Provider(clusterName)
 	if err != nil {
 		return err
 	}
@@ -66,6 +75,8 @@ func (m *Manager) Deploy(ctx context.Context, cluster string, name string) error
 	if err != nil {
 		return fmt.Errorf("failed to connect to cluster registry: %w", err)
 	}
+
+	replacementImages := make([]kustomize.Image, 0, len(deployment.Images))
 
 	if len(deployment.Images) > 0 {
 		m.logger.Info("Building images")
@@ -101,8 +112,6 @@ func (m *Manager) Deploy(ctx context.Context, cluster string, name string) error
 				return err
 			}
 
-			m.logger.Info("Pushing image", "image", image.Image)
-
 			img, err := crane.Load(artifact.File.Name())
 			if err != nil {
 				artifact.Delete()
@@ -117,6 +126,15 @@ func (m *Manager) Deploy(ctx context.Context, cluster string, name string) error
 				return fmt.Errorf("failed to create tag: %w", err)
 			}
 
+			h, err := img.Digest()
+			if err != nil {
+				artifact.Delete()
+
+				return fmt.Errorf("failed to get image digest: %w", err)
+			}
+
+			m.logger.Info("Pushing image", "digest", h)
+
 			if err := remote.Push(
 				tag,
 				img,
@@ -130,10 +148,121 @@ func (m *Manager) Deploy(ctx context.Context, cluster string, name string) error
 			}
 
 			artifact.Delete()
+
+			replacementImages = append(replacementImages, kustomize.Image{
+				Name:    image.Image,
+				NewName: image.Image,
+				Digest:  h.String(),
+			})
 		}
 	}
 
-	m.logger.Info("Building manifests")
+	m.logger.Info("Pushing manifests")
+
+	if deployment.Kustomize == nil {
+		return fmt.Errorf("%w: no kustomize configuration provided", ErrInvalid)
+	}
+
+	ociClient := ociclient.NewClient([]crane.Option{crane.WithTransport(regTrans), crane.WithAuth(regAuth), crane.Insecure})
+
+	manTag, err := conname.NewTag(provider.Registry() + "/localflux/" + deployment.Name)
+	if err != nil {
+		return fmt.Errorf("failed to create tag: %w", err)
+	}
+
+	pushedTag, err := ociClient.Push(
+		ctx,
+		manTag.String(),
+		deployment.Kustomize.Context,
+		ociclient.WithPushIgnorePaths(deployment.Kustomize.IgnorePaths...),
+		ociclient.WithPushMetadata(ociclient.Metadata{
+			Source:  "localflux",
+			Created: time.Unix(0, 0).Format(time.RFC3339),
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to push manifests: %w", err)
+	}
+
+	m.logger.Info("Deploying")
+
+	kc, err := cluster.NewK8sClientForCtx(cluster.DefaultKubeConfigPath(), provider.ContextName())
+	if err != nil {
+		return fmt.Errorf("failed to create k8s client: %w", err)
+	}
+
+	parsedDigest, err := conname.NewDigest(pushedTag)
+	if err != nil {
+		return fmt.Errorf("failed to parse pushed tag: %w", err)
+	}
+
+	if err := kc.CreateNamespace(ctx, cluster.LFNamespace); err != nil {
+		return fmt.Errorf("failed to create namespace: %w", err)
+	}
+
+	if deployment.Kustomize.Namespace != "" {
+		if err := kc.CreateNamespace(ctx, deployment.Kustomize.Namespace); err != nil {
+			return fmt.Errorf("failed to create namespace: %w", err)
+		}
+	}
+
+	if err := kc.PatchSSA(ctx, &sourcev1b2.OCIRepository{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       sourcev1b2.OCIRepositoryKind,
+			APIVersion: sourcev1b2.GroupVersion.String(),
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployment.Name,
+			Namespace: cluster.LFNamespace,
+		},
+		Spec: sourcev1b2.OCIRepositorySpec{
+			URL: "oci://" + parsedDigest.Repository.String(),
+			Reference: &sourcev1b2.OCIRepositoryRef{
+				Digest: parsedDigest.DigestStr(),
+			},
+			Interval: metav1.Duration{
+				Duration: time.Minute,
+			},
+			Insecure: true,
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to create oci repository: %w", err)
+	}
+
+	if err := kc.PatchSSA(ctx, &kustomizev1.Kustomization{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kustomizev1.GroupVersion.String(),
+			Kind:       kustomizev1.KustomizationKind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      deployment.Name,
+			Namespace: cluster.LFNamespace,
+		},
+		Spec: kustomizev1.KustomizationSpec{
+			Interval: metav1.Duration{
+				Duration: time.Minute,
+			},
+			Path: deployment.Kustomize.Path,
+			PostBuild: &kustomizev1.PostBuild{
+				Substitute: deployment.Kustomize.Substitute,
+			},
+			Prune:   true,
+			Patches: deployment.Kustomize.Patches,
+			Images:  replacementImages,
+			SourceRef: kustomizev1.CrossNamespaceSourceReference{
+				Namespace: cluster.LFNamespace,
+				Kind:      sourcev1b2.OCIRepositoryKind,
+				Name:      deployment.Name,
+			},
+			TargetNamespace: deployment.Kustomize.Namespace,
+			Force:           true,
+			Components:      deployment.Kustomize.Components,
+		},
+	}); err != nil {
+		return fmt.Errorf("failed to create kustomization: %w", err)
+	}
+
+	m.logger.Info("Done")
 
 	return nil
 }

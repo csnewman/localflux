@@ -7,9 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"k8s.io/apimachinery/pkg/runtime"
 	"path/filepath"
 	"strings"
 
+	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,10 +23,14 @@ import (
 	memory "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	controllerclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const LFNamespace = "localflux"
 
 var decUnstructured = yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
 
@@ -35,9 +43,10 @@ func DefaultKubeConfigPath() string {
 }
 
 type K8sClient struct {
-	clientset *kubernetes.Clientset
-	dyn       *dynamic.DynamicClient
-	mapper    *restmapper.DeferredDiscoveryRESTMapper
+	clientset  *kubernetes.Clientset
+	dyn        *dynamic.DynamicClient
+	mapper     *restmapper.DeferredDiscoveryRESTMapper
+	controller controllerclient.Client
 }
 
 func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
@@ -53,10 +62,23 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
+	if err := sourcev1b2.AddToScheme(clientsetscheme.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to load scheme: %w", err)
+	}
+
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create: %w", err)
 	}
+
+	controller, err := controllerclient.New(config, controllerclient.Options{
+		Scheme: clientsetscheme.Scheme,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create: %w", err)
+	}
+
+	//clientset.CoreV1().Pods(.)
 
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
@@ -66,9 +88,10 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(clientset.Discovery()))
 
 	return &K8sClient{
-		clientset: clientset,
-		dyn:       dyn,
-		mapper:    mapper,
+		clientset:  clientset,
+		dyn:        dyn,
+		mapper:     mapper,
+		controller: controller,
 	}, nil
 }
 
@@ -119,4 +142,28 @@ func (c *K8sClient) Apply(ctx context.Context, data string) error {
 	}
 
 	return nil
+}
+
+func (c *K8sClient) CreateNamespace(ctx context.Context, name string) error {
+	_, err := c.clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		//TypeMeta:   metav1.TypeMeta{},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: name,
+		},
+		Spec: corev1.NamespaceSpec{},
+	}, metav1.CreateOptions{})
+
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+
+	return err
+}
+
+func (c *K8sClient) PatchSSA(ctx context.Context, obj controllerclient.Object) error {
+	u := &unstructured.Unstructured{}
+	u.Object, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+
+	return c.controller.Patch(ctx, u, controllerclient.Apply, controllerclient.ForceOwnership, controllerclient.FieldOwner("localflux"))
 }

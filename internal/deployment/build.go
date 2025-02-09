@@ -61,9 +61,8 @@ func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (
 }
 
 type Artifact struct {
-	File   *os.File
-	Name   string
-	Digest string
+	File *os.File
+	Name string
 }
 
 func (a *Artifact) Delete() {
@@ -146,9 +145,8 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, s
 	_ = tempFile.Close()
 
 	return &Artifact{
-		File:   tempFile,
-		Name:   resp.ExporterResponse["image.name"],
-		Digest: resp.ExporterResponse["containerimage.digest"],
+		File: tempFile,
+		Name: resp.ExporterResponse["image.name"],
 	}, nil
 }
 
