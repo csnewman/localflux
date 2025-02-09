@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"github.com/csnewman/localflux/internal/config"
 	"io"
 	"log/slog"
 	"os"
@@ -13,9 +15,80 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type MinikubeProvider struct {
+	c   *Minikube
+	cfg config.Cluster
+}
+
+var _ Provider = (*MinikubeProvider)(nil)
+
+func NewMinikubeProvider(c *Minikube, cfg config.Cluster) *MinikubeProvider {
+	return &MinikubeProvider{
+		c:   c,
+		cfg: cfg,
+	}
+}
+
+func (p *MinikubeProvider) ProfileName() string {
+	name := p.cfg.Minikube.Profile
+	if name != "" {
+		return name
+	}
+
+	return "minikube"
+}
+
+func (p *MinikubeProvider) Status(ctx context.Context) (Status, error) {
+	profiles, err := p.c.Profiles(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	profile, ok := profiles[p.ProfileName()]
+	if !ok {
+		return StatusNotFound, nil
+	}
+
+	switch profile.Status {
+	case "OK":
+		return StatusActive, nil
+	default:
+		return "", fmt.Errorf("unknown profile status: %s", profile.Status)
+	}
+}
+
+func (p *MinikubeProvider) Create(ctx context.Context) error {
+	status, err := p.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get status: %w", err)
+	}
+
+	if status != StatusNotFound {
+		return ErrAlreadyExists
+	}
+
+	return p.c.Start(ctx, p.ProfileName())
+}
+
+func (p *MinikubeProvider) Start(ctx context.Context) error {
+	status, err := p.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get status: %w", err)
+	}
+
+	if status != StatusStopped {
+		return fmt.Errorf("%w: %v", ErrInvalidState, status)
+	}
+
+	return p.c.Start(ctx, p.ProfileName())
+}
+
+func (p *MinikubeProvider) ContextName() string {
+	return p.ProfileName()
+}
+
 type Minikube struct {
-	logger  *slog.Logger
-	profile string
+	logger *slog.Logger
 }
 
 func NewMinikube(logger *slog.Logger) *Minikube {
@@ -24,19 +97,15 @@ func NewMinikube(logger *slog.Logger) *Minikube {
 	}
 }
 
-func (m *Minikube) SetProfile(profile string) {
-	m.profile = profile
-}
-
-func (m *Minikube) Start(ctx context.Context) error {
+func (m *Minikube) Start(ctx context.Context, profile string) error {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
 	c := exec.CommandContext(ctx, "minikube")
 
 	c.Args = append(c.Args, "start")
 
-	if m.profile != "" {
-		c.Args = append(c.Args, "--profile", m.profile)
+	if profile != "" {
+		c.Args = append(c.Args, "--profile", profile)
 	}
 
 	c.Args = append(c.Args, "--output", "json")

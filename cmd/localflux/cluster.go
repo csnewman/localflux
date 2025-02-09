@@ -38,5 +38,5 @@ func clusterStart(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
-	return m.Start(name)
+	return m.Start(cmd.Context(), name)
 }

@@ -4,15 +4,36 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/csnewman/localflux/internal/config"
 	"log/slog"
+
+	"github.com/csnewman/localflux/internal/config"
 )
 
 var (
 	ErrNoDefault     = errors.New("no default cluster set")
 	ErrNotDefined    = errors.New("cluster not defined in config")
 	ErrAlreadyExists = errors.New("cluster already exists")
+	ErrInvalidState  = errors.New("cluster in invalid state")
+	ErrInvalidConfig = errors.New("invalid configuration")
 )
+
+type Status string
+
+const (
+	StatusNotFound Status = "not-found"
+	StatusStopped  Status = "stopped"
+	StatusActive   Status = "active"
+)
+
+type Provider interface {
+	Status(ctx context.Context) (Status, error)
+
+	Create(ctx context.Context) error
+
+	Start(ctx context.Context) error
+
+	ContextName() string
+}
 
 type Manager struct {
 	logger *slog.Logger
@@ -26,7 +47,7 @@ func NewManager(logger *slog.Logger, cfg config.Config) *Manager {
 	}
 }
 
-func (m *Manager) Start(name string) error {
+func (m *Manager) Start(ctx context.Context, name string) error {
 	if name == "" {
 		name = m.cfg.DefaultCluster
 	}
@@ -35,42 +56,54 @@ func (m *Manager) Start(name string) error {
 		return ErrNoDefault
 	}
 
-	cfg := m.getConfig(name)
-	if cfg == nil {
-		return fmt.Errorf("%w: %s", ErrNotDefined, name)
-	}
-
-	m.logger.Info("Starting cluster", "name", name)
-
-	ctx := context.Background()
-
-	mk := NewMinikube(m.logger)
-
-	profiles, err := mk.Profiles(ctx)
+	p, err := m.Provider(name)
 	if err != nil {
-		return fmt.Errorf("failed to get profiles: %w", err)
+		return err
 	}
 
-	profileName := cfg.Minikube.Profile
-	if profileName == "" {
-		profileName = "minikube"
+	status, err := p.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get status: %w", err)
 	}
 
-	profile, ok := profiles[profileName]
-	if ok && profile.Status != "Stopped" {
-		if profile.Status == "OK" {
-			m.logger.Info("Cluster already running")
+	switch status {
+	case StatusNotFound:
+		m.logger.Info("Creating cluster", "name", name)
 
-			return nil
+		if err := p.Create(ctx); err != nil {
+			return fmt.Errorf("failed to create: %w", err)
 		}
 
-		return fmt.Errorf("%w: state=%s", ErrAlreadyExists, profile.Status)
+	case StatusActive:
+		m.logger.Info("Cluster already running", "name", name)
+
+	case StatusStopped:
+		m.logger.Info("Starting cluster", "name", name)
+
+		if err := p.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start: %w", err)
+		}
+
+	default:
+		panic("unexpected status")
 	}
 
-	mk.SetProfile(profileName)
+	kc, err := NewK8sClientForCtx(DefaultKubeConfigPath(), p.ContextName())
+	if err != nil {
+		return fmt.Errorf("failed to create k8s client: %w", err)
+	}
 
-	if err := mk.Start(ctx); err != nil {
-		return fmt.Errorf("failed to start minikube: %w", err)
+	m.logger.Info("Fetching flux manifests")
+
+	fluxSrc, err := FetchFluxManifests(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to fetch flux manifests: %w", err)
+	}
+
+	m.logger.Info("Applying flux manifests")
+
+	if err := kc.Apply(ctx, fluxSrc); err != nil {
+		return fmt.Errorf("failed to apply flux manifests: %w", err)
 	}
 
 	return nil
@@ -84,4 +117,20 @@ func (m *Manager) getConfig(name string) config.Cluster {
 	}
 
 	return nil
+}
+
+func (m *Manager) Provider(name string) (Provider, error) {
+	cfg := m.getConfig(name)
+	if cfg == nil {
+		return nil, fmt.Errorf("%w: %s", ErrNotDefined, name)
+	}
+
+	if cfg.Minikube != nil {
+		mc := NewMinikube(m.logger)
+		mp := NewMinikubeProvider(mc, cfg)
+
+		return mp, nil
+	}
+
+	return nil, fmt.Errorf("%w: %s has no provider", ErrInvalidConfig, name)
 }
