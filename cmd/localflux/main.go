@@ -28,6 +28,7 @@ See https://github.com/csnewman/localflux
 	}
 
 	rootCmd.AddCommand(createClusterCmd())
+	rootCmd.AddCommand(createDeployCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

@@ -10,8 +10,11 @@ import (
 )
 
 type (
-	Config  = *v1alpha1.Config
-	Cluster = *v1alpha1.Cluster
+	Config     = *v1alpha1.Config
+	Cluster    = *v1alpha1.Cluster
+	BuildKit   = *v1alpha1.BuildKit
+	Image      = *v1alpha1.Image
+	Deployment = *v1alpha1.Deployment
 )
 
 var ErrUnknownVersion = errors.New("unknown version")

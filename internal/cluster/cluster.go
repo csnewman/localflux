@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 
 	"github.com/csnewman/localflux/internal/config"
+	"github.com/google/go-containerregistry/pkg/authn"
 )
 
 var (
@@ -35,6 +37,12 @@ type Provider interface {
 	Reconfigure(ctx context.Context) error
 
 	ContextName() string
+
+	BuildKitConfig() config.BuildKit
+
+	Registry() string
+
+	RegistryConn(ctx context.Context) (http.RoundTripper, authn.Authenticator, error)
 }
 
 type Manager struct {
@@ -115,20 +123,20 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	return nil
 }
 
-func (m *Manager) getConfig(name string) config.Cluster {
+func (m *Manager) GetConfig(name string) (config.Cluster, error) {
 	for _, cluster := range m.cfg.Clusters {
 		if cluster.Name == name {
-			return cluster
+			return cluster, nil
 		}
 	}
 
-	return nil
+	return nil, fmt.Errorf("%w: %s", ErrNotDefined, name)
 }
 
 func (m *Manager) Provider(name string) (Provider, error) {
-	cfg := m.getConfig(name)
-	if cfg == nil {
-		return nil, fmt.Errorf("%w: %s", ErrNotDefined, name)
+	cfg, err := m.GetConfig(name)
+	if err != nil {
+		return nil, err
 	}
 
 	if cfg.Minikube != nil {

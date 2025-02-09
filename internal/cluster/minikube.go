@@ -7,15 +7,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/csnewman/localflux/internal/config"
 	"io"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	"github.com/csnewman/localflux/internal/config"
+	"github.com/csnewman/localflux/internal/config/v1alpha1"
+	"github.com/google/go-containerregistry/pkg/authn"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -158,8 +163,8 @@ func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
 
 		p.logger.Info("Enabling addon", "name", name)
 
-		if name == registryAliases && p.cfg.Minikube.Registry != "" {
-			if err := p.c.ConfigureRegistryAliases(ctx, profile, name, []string{p.cfg.Minikube.Registry}); err != nil {
+		if name == registryAliases && len(p.cfg.Minikube.RegistryAliases) > 0 {
+			if err := p.c.ConfigureRegistryAliases(ctx, profile, name, p.cfg.Minikube.RegistryAliases); err != nil {
 				return fmt.Errorf("failed to configure addon %q: %w", name, err)
 			}
 		}
@@ -167,7 +172,6 @@ func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
 		if err := p.c.EnableAddon(ctx, profile, name); err != nil {
 			return fmt.Errorf("failed to enable addon %q: %w", name, err)
 		}
-
 	}
 
 	return nil
@@ -175,6 +179,47 @@ func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
 
 func (p *MinikubeProvider) ContextName() string {
 	return p.ProfileName()
+}
+
+func (p *MinikubeProvider) BuildKitConfig() config.BuildKit {
+	if p.cfg.BuildKit == nil {
+		return &v1alpha1.BuildKit{}
+	}
+
+	return p.cfg.BuildKit
+}
+
+func (p *MinikubeProvider) Registry() string {
+	return "registry.minikube"
+}
+
+func (p *MinikubeProvider) RegistryConn(ctx context.Context) (http.RoundTripper, authn.Authenticator, error) {
+	ip, err := p.c.IP(ctx, p.ProfileName())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	addrOverride := net.JoinHostPort(ip.String(), "5000")
+
+	dc := (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+
+	trans := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: func(ctx context.Context, net, addr string) (net.Conn, error) {
+			return dc(ctx, net, addrOverride)
+		},
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		MaxIdleConnsPerHost:   50,
+	}
+
+	return trans, authn.Anonymous, nil
 }
 
 type Minikube struct {
@@ -418,6 +463,39 @@ func (m *Minikube) ConfigureRegistryAliases(ctx context.Context, profile string,
 	m.logger.Info("Unexpected output", "output", text)
 
 	return ErrAddonFailed
+}
+
+func (m *Minikube) IP(ctx context.Context, profile string) (net.IP, error) {
+	c := exec.CommandContext(ctx, "minikube")
+	c.Args = append(c.Args, "ip")
+
+	if profile != "" {
+		c.Args = append(c.Args, "--profile", profile)
+	}
+
+	buffer := bytes.NewBuffer(nil)
+
+	c.Stdout = buffer
+	c.Stderr = os.Stderr
+	c.Stdin = nil
+
+	if err := c.Run(); err != nil {
+		m.logger.Info("Unexpected output", "output", buffer.String())
+
+		return nil, err
+	}
+
+	text := strings.TrimSpace(buffer.String())
+
+	ip := net.ParseIP(text)
+
+	if ip == nil {
+		m.logger.Info("Unexpected output", "output", buffer.String())
+
+		return nil, ErrInvalidState
+	}
+
+	return ip, nil
 }
 
 func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) (bool, error)) error {
