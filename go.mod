@@ -3,11 +3,14 @@ module github.com/csnewman/localflux
 go 1.23.6
 
 require (
+	github.com/briandowns/spinner v1.23.2
 	github.com/cloudevents/sdk-go/v2 v2.15.2
 	github.com/docker/cli v27.5.0+incompatible
 	github.com/fluxcd/kustomize-controller/api v1.4.0
+	github.com/fluxcd/pkg/apis/kustomize v1.6.1
 	github.com/fluxcd/pkg/oci v0.45.0
 	github.com/fluxcd/source-controller/api v1.4.1
+	github.com/go-logr/logr v1.4.2
 	github.com/google/go-containerregistry v0.20.3
 	github.com/moby/buildkit v0.19.0
 	github.com/spf13/cobra v1.8.1
@@ -60,9 +63,9 @@ require (
 	github.com/docker/docker-credential-helpers v0.8.2 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/evanphx/json-patch/v5 v5.9.0 // indirect
+	github.com/fatih/color v1.15.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/fluxcd/pkg/apis/acl v0.3.0 // indirect
-	github.com/fluxcd/pkg/apis/kustomize v1.6.1 // indirect
 	github.com/fluxcd/pkg/apis/meta v1.6.1 // indirect
 	github.com/fluxcd/pkg/sourceignore v0.11.0 // indirect
 	github.com/fluxcd/pkg/tar v0.11.0 // indirect
@@ -71,7 +74,6 @@ require (
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.2 // indirect
 	github.com/go-git/go-git/v5 v5.13.2 // indirect
-	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
@@ -97,6 +99,8 @@ require (
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/locker v1.0.1 // indirect

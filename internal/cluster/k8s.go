@@ -7,19 +7,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"k8s.io/apimachinery/pkg/runtime"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
+	"github.com/go-logr/logr"
+	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/types"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apimachinery/pkg/watch"
 	memory "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -28,6 +32,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 	controllerclient "sigs.k8s.io/controller-runtime/pkg/client"
+	controllerlog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const LFNamespace = "localflux"
@@ -40,6 +45,10 @@ func DefaultKubeConfigPath() string {
 	}
 
 	return ""
+}
+
+func init() {
+	controllerlog.SetLogger(logr.Discard())
 }
 
 type K8sClient struct {
@@ -146,7 +155,6 @@ func (c *K8sClient) Apply(ctx context.Context, data string) error {
 
 func (c *K8sClient) CreateNamespace(ctx context.Context, name string) error {
 	_, err := c.clientset.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
-		//TypeMeta:   metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: name,
@@ -166,4 +174,162 @@ func (c *K8sClient) PatchSSA(ctx context.Context, obj controllerclient.Object) e
 	u.Object, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
 
 	return c.controller.Patch(ctx, u, controllerclient.Apply, controllerclient.ForceOwnership, controllerclient.FieldOwner("localflux"))
+}
+
+func (c *K8sClient) WaitNamespaceReady(ctx context.Context, name string, cb func(names []string)) error {
+	if err := c.waitNamespaceReadyDS(ctx, name, cb); err != nil {
+		return err
+	}
+
+	if err := c.waitNamespaceReadyRS(ctx, name, cb); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb func(names []string)) error {
+	wi, err := c.clientset.AppsV1().DaemonSets(name).Watch(ctx, metav1.ListOptions{
+		Watch:                true,
+		AllowWatchBookmarks:  true,
+		ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
+		TimeoutSeconds:       nil,
+		SendInitialEvents:    ptr(true),
+	})
+	if err != nil {
+		return err
+	}
+
+	defer wi.Stop()
+
+	statuses := make(map[string]bool)
+	hadBookmark := false
+
+	rc := wi.ResultChan()
+	for {
+		select {
+		case v, ok := <-rc:
+			if !ok {
+				return errors.New("watch channel closed")
+			}
+
+			switch v.Type {
+			case watch.Added, watch.Modified:
+				ds, ok := v.Object.(*v1.DaemonSet)
+				if !ok {
+					continue
+				}
+
+				statuses[ds.Name] = ds.Status.DesiredNumberScheduled == ds.Status.NumberReady
+
+			case watch.Deleted:
+				ds, ok := v.Object.(*v1.DaemonSet)
+				if !ok {
+					continue
+				}
+
+				delete(statuses, ds.Name)
+
+			case watch.Error:
+				return fmt.Errorf("watch err: %v", v.Object)
+
+			case watch.Bookmark:
+				hadBookmark = true
+			}
+
+			if hadBookmark {
+				var notReady []string
+
+				for n, b := range statuses {
+					if !b {
+						notReady = append(notReady, n)
+					}
+				}
+
+				slices.Sort(notReady)
+
+				if len(notReady) == 0 {
+					return nil
+				}
+
+				cb(notReady)
+			}
+		case <-ctx.Done():
+		}
+	}
+}
+
+func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb func(names []string)) error {
+	wi, err := c.clientset.AppsV1().ReplicaSets(name).Watch(ctx, metav1.ListOptions{
+		Watch:                true,
+		AllowWatchBookmarks:  true,
+		ResourceVersionMatch: metav1.ResourceVersionMatchNotOlderThan,
+		TimeoutSeconds:       nil,
+		SendInitialEvents:    ptr(true),
+	})
+	if err != nil {
+		return err
+	}
+
+	defer wi.Stop()
+
+	statuses := make(map[string]bool)
+	hadBookmark := false
+
+	rc := wi.ResultChan()
+	for {
+		select {
+		case v, ok := <-rc:
+			if !ok {
+				return errors.New("watch channel closed")
+			}
+
+			switch v.Type {
+			case watch.Added, watch.Modified:
+				ds, ok := v.Object.(*v1.ReplicaSet)
+				if !ok {
+					continue
+				}
+
+				statuses[ds.Name] = ds.Status.Replicas == ds.Status.ReadyReplicas
+
+			case watch.Deleted:
+				ds, ok := v.Object.(*v1.ReplicaSet)
+				if !ok {
+					continue
+				}
+
+				delete(statuses, ds.Name)
+
+			case watch.Error:
+				return fmt.Errorf("watch err: %v", v.Object)
+
+			case watch.Bookmark:
+				hadBookmark = true
+			}
+
+			if hadBookmark {
+				var notReady []string
+
+				for n, b := range statuses {
+					if !b {
+						notReady = append(notReady, n)
+					}
+				}
+
+				slices.Sort(notReady)
+
+				if len(notReady) == 0 {
+					return nil
+				}
+
+				cb(notReady)
+			}
+		case <-ctx.Done():
+		}
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
 }

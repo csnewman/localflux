@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/briandowns/spinner"
 	"github.com/csnewman/localflux/internal/config"
 	"github.com/google/go-containerregistry/pkg/authn"
 )
@@ -119,6 +121,35 @@ func (m *Manager) Start(ctx context.Context, name string) error {
 	if err := kc.Apply(ctx, fluxSrc); err != nil {
 		return fmt.Errorf("failed to apply flux manifests: %w", err)
 	}
+
+	m.logger.Info("Waiting until cluster is ready")
+
+	s := spinner.New(spinner.CharSets[9], 100*time.Millisecond)
+	s.Start()
+
+	for _, ns := range []string{"kube-system", "flux-system"} {
+		if err := kc.WaitNamespaceReady(ctx, ns, func(names []string) {
+			str := ""
+
+			for i, v := range names {
+				if i != 0 {
+					str += ", "
+				}
+
+				str += ns + "/" + v
+			}
+
+			s.Suffix = str
+		}); err != nil {
+			s.Stop()
+
+			return fmt.Errorf("failed to wait for NS: %w", err)
+		}
+	}
+
+	s.Stop()
+
+	m.logger.Info("Ready")
 
 	return nil
 }

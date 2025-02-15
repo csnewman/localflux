@@ -68,6 +68,8 @@ func (p *MinikubeProvider) Status(ctx context.Context) (Status, error) {
 	switch profile.Status {
 	case "OK":
 		return StatusActive, nil
+	case "Stopped":
+		return StatusStopped, nil
 	default:
 		return "", fmt.Errorf("unknown profile status: %s", profile.Status)
 	}
