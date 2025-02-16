@@ -1,6 +1,8 @@
 package v1alpha1
 
-import "github.com/fluxcd/pkg/apis/kustomize"
+import (
+	"github.com/fluxcd/pkg/apis/kustomize"
+)
 
 const Version string = "localflux/v1alpha1"
 
@@ -30,9 +32,9 @@ type BuildKit struct {
 }
 
 type Deployment struct {
-	Name      string     `json:"name"`
-	Images    []*Image   `json:"images"`
-	Kustomize *Kustomize `json:"kustomize"`
+	Name   string   `json:"name"`
+	Images []*Image `json:"images"`
+	Steps  []*Step  `json:"steps"`
 }
 
 type Image struct {
@@ -43,6 +45,12 @@ type Image struct {
 	BuildArgs map[string]string `json:"buildArgs"`
 }
 
+type Step struct {
+	Name      string     `json:"name"`
+	Kustomize *Kustomize `json:"kustomize"`
+	Helm      *Helm      `json:"helm"`
+}
+
 type Kustomize struct {
 	Context     string            `json:"context"`
 	IgnorePaths []string          `json:"ignorePaths"`
@@ -51,4 +59,16 @@ type Kustomize struct {
 	Components  []string          `json:"components"`
 	Substitute  map[string]string `json:"substitute"`
 	Patches     []kustomize.Patch `json:"patches"`
+}
+
+type Helm struct {
+	Repo        string            `json:"repo"`
+	Context     string            `json:"context"`
+	IgnorePaths []string          `json:"ignorePaths"`
+	Chart       string            `json:"chart"`
+	Version     string            `json:"version"`
+	Namespace   string            `json:"namespace"`
+	Patches     []kustomize.Patch `json:"patches"`
+	Values      map[string]any    `json:"values"`
+	ValueFiles  []string          `json:"valueFiles"`
 }

@@ -13,6 +13,16 @@ deployments:
     images:
       - image: example.invalid/hello
         context: hello
-    kustomize:
-      context: deploy
-      namespace: demo
+    steps:
+      - name: podinfo
+        helm:
+          repo: https://stefanprodan.github.io/podinfo
+          chart: podinfo
+          version: '6.5.*'
+          namespace: podinfo
+          values:
+            replicaCount: 1
+      - name: core
+        kustomize:
+          context: deploy
+          namespace: demo

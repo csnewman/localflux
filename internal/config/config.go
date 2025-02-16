@@ -15,6 +15,7 @@ type (
 	BuildKit   = *v1alpha1.BuildKit
 	Image      = *v1alpha1.Image
 	Deployment = *v1alpha1.Deployment
+	Step       = *v1alpha1.Step
 )
 
 var ErrUnknownVersion = errors.New("unknown version")
