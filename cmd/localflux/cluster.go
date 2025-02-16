@@ -39,7 +39,7 @@ func clusterStart(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
-	return drive(cmd.Context(), func(ctx context.Context, cb cluster.Callbacks) error {
+	return drive(cmd.Context(), func(ctx context.Context, cb driverCallbacks) error {
 		return m.Start(ctx, name, cb)
 	})
 }

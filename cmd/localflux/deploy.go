@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/config"
@@ -42,5 +43,7 @@ func deploy(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
-	return m.Deploy(cmd.Context(), cluster, name)
+	return drive(cmd.Context(), func(ctx context.Context, cb driverCallbacks) error {
+		return m.Deploy(ctx, cluster, name, cb)
+	})
 }

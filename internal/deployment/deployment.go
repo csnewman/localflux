@@ -16,8 +16,6 @@ import (
 	"github.com/google/go-containerregistry/pkg/crane"
 	conname "github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
-	"github.com/moby/buildkit/client"
-	"golang.org/x/sync/errgroup"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -40,7 +38,23 @@ func NewManager(logger *slog.Logger, cfg config.Config, clusters *cluster.Manage
 	}
 }
 
-func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) error {
+type Callbacks interface {
+	Completed(msg string, dur time.Duration)
+
+	State(msg string, detail string, start time.Time)
+
+	Success(detail string)
+
+	Info(msg string)
+
+	Warn(msg string)
+
+	Error(msg string)
+
+	BuildStatus(name string, graph *BuildGraph)
+}
+
+func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, cb Callbacks) error {
 	if clusterName == "" {
 		clusterName = m.cfg.DefaultCluster
 	}
@@ -71,6 +85,8 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 
 	m.logger.Info("Deploying", "name", deployment.Name)
 
+	cb.Info(fmt.Sprintf("Deploying %q to %q", deployment.Name, clusterName))
+
 	regTrans, regAuth, err := provider.RegistryConn(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to connect to cluster registry: %w", err)
@@ -82,35 +98,20 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 		m.logger.Info("Building images")
 
 		for _, image := range deployment.Images {
+			start := time.Now()
+
 			m.logger.Info("Building image", "image", image.Image)
 
-			statusChan := make(chan *client.SolveStatus)
+			cb.State("Building images", image.Image, start)
 
-			errgrp, gctx := errgroup.WithContext(ctx)
-
-			var artifact *Artifact
-
-			errgrp.Go(func() error {
-				var err error
-
-				artifact, err = b.Build(gctx, image, "./", statusChan)
-
-				return err
+			artifact, err := b.Build(ctx, image, "./", func(bg *BuildGraph) {
+				cb.BuildStatus(image.Image, bg)
 			})
-
-			errgrp.Go(func() error {
-				// don't use gctx here
-
-				return DisplayProgress(ctx, statusChan)
-			})
-
-			if err := errgrp.Wait(); err != nil {
-				if artifact != nil {
-					artifact.Delete()
-				}
-
-				return err
+			if err != nil {
+				return fmt.Errorf("failed to build image: %w", err)
 			}
+
+			cb.BuildStatus(image.Image, nil)
 
 			img, err := crane.Load(artifact.File.Name())
 			if err != nil {
@@ -154,10 +155,16 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 				NewName: image.Image,
 				Digest:  h.String(),
 			})
+
+			cb.Completed(fmt.Sprintf("Built image %q", image.Image), time.Since(start))
 		}
 	}
 
 	m.logger.Info("Pushing manifests")
+
+	start := time.Now()
+
+	cb.State("Building manifests", "", start)
 
 	if deployment.Kustomize == nil {
 		return fmt.Errorf("%w: no kustomize configuration provided", ErrInvalid)
@@ -184,7 +191,13 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 		return fmt.Errorf("failed to push manifests: %w", err)
 	}
 
+	cb.Completed("Built manifests", time.Since(start))
+
+	start = time.Now()
+
 	m.logger.Info("Deploying")
+
+	cb.State("Deploying", "namespace", start)
 
 	kc, err := cluster.NewK8sClientForCtx(cluster.DefaultKubeConfigPath(), provider.ContextName())
 	if err != nil {
@@ -205,6 +218,8 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 			return fmt.Errorf("failed to create namespace: %w", err)
 		}
 	}
+
+	cb.State("Deploying", "oci", start)
 
 	if err := kc.PatchSSA(ctx, &sourcev1b2.OCIRepository{
 		TypeMeta: metav1.TypeMeta{
@@ -228,6 +243,8 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 	}); err != nil {
 		return fmt.Errorf("failed to create oci repository: %w", err)
 	}
+
+	cb.State("Deploying", "kustomize", start)
 
 	if err := kc.PatchSSA(ctx, &kustomizev1.Kustomization{
 		TypeMeta: metav1.TypeMeta{
@@ -261,6 +278,9 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string) e
 	}); err != nil {
 		return fmt.Errorf("failed to create kustomization: %w", err)
 	}
+
+	cb.Completed("Deployed manifests", time.Since(start))
+	cb.State("Done", "", time.Now())
 
 	m.logger.Info("Done")
 

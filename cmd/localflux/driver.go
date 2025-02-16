@@ -7,9 +7,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/csnewman/localflux/internal/cluster"
+	"github.com/csnewman/localflux/internal/deployment"
 	"golang.org/x/sync/errgroup"
+	"strings"
 	"time"
 )
+
+type driverCallbacks interface {
+	cluster.Callbacks
+	deployment.Callbacks
+}
 
 var (
 	spinnerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
@@ -21,7 +28,7 @@ var (
 	errorMark     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).SetString("⚠")
 )
 
-func drive(ctx context.Context, fn func(ctx context.Context, cb cluster.Callbacks) error) error {
+func drive(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
 	if plainOutput {
 		return drivePlain(ctx, fn)
 	}
@@ -29,17 +36,17 @@ func drive(ctx context.Context, fn func(ctx context.Context, cb cluster.Callback
 	return driveUI(ctx, fn)
 }
 
-func drivePlain(ctx context.Context, fn func(ctx context.Context, cb cluster.Callbacks) error) error {
+func drivePlain(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
 	return fn(ctx, &plainCallbacks{})
 }
 
-func driveUI(ctx context.Context, fn func(ctx context.Context, cb cluster.Callbacks) error) error {
+func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
 	outerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	g, gctx := errgroup.WithContext(outerCtx)
 
-	p := tea.NewProgram(newModel(), tea.WithContext(gctx))
+	p := tea.NewProgram(newModel(), tea.WithContext(ctx))
 	defer p.Quit()
 
 	g.Go(func() error {
@@ -51,23 +58,30 @@ func driveUI(ctx context.Context, fn func(ctx context.Context, cb cluster.Callba
 	})
 
 	g.Go(func() error {
-		defer p.Send(&stateData{
-			exit: true,
-		})
+		//defer
 
-		return fn(gctx, &uiCallbacks{
+		err := fn(gctx, &uiCallbacks{
 			p: p,
 		})
+
+		p.Send(&stateData{
+			exit:    true,
+			exitErr: err,
+		})
+
+		return err
+
 	})
 
 	return g.Wait()
 }
 
 type model struct {
-	spinner  spinner.Model
-	quitting bool
-	state    *stateData
-	width    int
+	spinner    spinner.Model
+	quitting   bool
+	state      *stateData
+	width      int
+	buildGraph *deployment.BuildGraph
 }
 
 func newModel() model {
@@ -99,14 +113,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, nil
-
 	case *stateData:
 		if msg.exit {
-			m.quitting = true
+			if msg.exitErr == nil {
+				m.quitting = true
+			}
+
 			return m, tea.Quit
 		}
 
 		m.state = msg
+		return m, nil
+	case *deployment.BuildGraph:
+		m.buildGraph = msg
 		return m, nil
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -129,6 +148,57 @@ func (m model) View() string {
 			s += "\n" + detailStyle.Width(m.width).Render(m.state.detail)
 		}
 
+		if m.buildGraph != nil {
+			m.buildGraph.Mu.Lock()
+			defer m.buildGraph.Mu.Unlock()
+
+			s += "\n" + detailStyle.Width(m.width).Render("----")
+
+			for _, id := range m.buildGraph.NodeOrder {
+				n := m.buildGraph.Nodes[id]
+
+				completed := time.Now()
+
+				if n.Completed != nil {
+					completed = *n.Completed
+				}
+
+				dur := completed.Sub(*n.Started).Round(time.Second)
+
+				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("%s %s %s", n.Name, dur.String(), n.Error))
+
+				for _, sid := range n.StatusOrder {
+					st := n.Statuses[sid]
+
+					completed := time.Now()
+
+					if st.Completed != nil {
+						completed = *st.Completed
+					}
+
+					dur := completed.Sub(*st.Started).Round(time.Second)
+
+					var v string
+
+					if st.Current != 0 || st.Total != 0 {
+						v = fmt.Sprintf("[%d/%d]", st.Current, st.Total)
+					}
+
+					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("| %s %s %s", sid, dur.String(), v))
+				}
+
+				if len(n.Logs) > 0 {
+					for l := range strings.Lines(string(n.Logs)) {
+						s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("> %s", l))
+					}
+				}
+
+				for _, warning := range n.Warnings {
+					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("! %s", string(warning.Short)))
+				}
+			}
+		}
+
 		s += "\n"
 	}
 
@@ -136,14 +206,19 @@ func (m model) View() string {
 }
 
 type stateData struct {
-	msg    string
-	detail string
-	start  time.Time
-	exit   bool
+	msg     string
+	detail  string
+	start   time.Time
+	exit    bool
+	exitErr error
 }
 
 type uiCallbacks struct {
 	p *tea.Program
+}
+
+func (c *uiCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) {
+	c.p.Send(graph)
 }
 
 func (c *uiCallbacks) Success(detail string) {
@@ -177,6 +252,7 @@ func (c *uiCallbacks) State(msg string, detail string, start time.Time) {
 type plainCallbacks struct {
 	lastMsg    string
 	lastDetail string
+	lastGraph  time.Time
 }
 
 func (c *plainCallbacks) State(msg string, detail string, start time.Time) {
@@ -212,4 +288,43 @@ func (c *plainCallbacks) Error(msg string) {
 
 func (c *plainCallbacks) Completed(msg string, dur time.Duration) {
 	fmt.Println("completed:", msg, dur.Round(time.Second))
+}
+
+func (c *plainCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) {
+	if graph == nil {
+		return
+	}
+
+	graph.Mu.Lock()
+	defer graph.Mu.Unlock()
+
+	if graph.Final {
+		c.lastGraph = time.Time{}
+	} else if time.Since(c.lastGraph) < time.Second*15 {
+		return
+	} else {
+		c.lastGraph = time.Now()
+	}
+
+	fmt.Println("----")
+
+	for _, id := range graph.NodeOrder {
+		n := graph.Nodes[id]
+
+		fmt.Println(n.Name, n.Started, n.Completed, n.Error)
+
+		for _, sid := range n.StatusOrder {
+			s := n.Statuses[sid]
+
+			fmt.Println("  |", sid, s.Started, s.Completed, s.Current, s.Total)
+		}
+
+		for _, log := range n.Logs {
+			fmt.Println("  >", string(log))
+		}
+
+		for _, warning := range n.Warnings {
+			fmt.Println("  !", string(warning.Short))
+		}
+	}
 }
