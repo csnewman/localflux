@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/config"
 	"github.com/spf13/cobra"
@@ -38,5 +39,7 @@ func clusterStart(cmd *cobra.Command, args []string) error {
 		name = args[0]
 	}
 
-	return m.Start(cmd.Context(), name)
+	return drive(cmd.Context(), func(ctx context.Context, cb cluster.Callbacks) error {
+		return m.Start(ctx, name, cb)
+	})
 }

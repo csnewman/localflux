@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"path/filepath"
 	"slices"
@@ -176,19 +177,110 @@ func (c *K8sClient) PatchSSA(ctx context.Context, obj controllerclient.Object) e
 	return c.controller.Patch(ctx, u, controllerclient.Apply, controllerclient.ForceOwnership, controllerclient.FieldOwner("localflux"))
 }
 
-func (c *K8sClient) WaitNamespaceReady(ctx context.Context, name string, cb func(names []string)) error {
-	if err := c.waitNamespaceReadyDS(ctx, name, cb); err != nil {
-		return err
+func (c *K8sClient) WaitNamespaceReady(ctx context.Context, ns []string, cb func(names []string)) error {
+	egroup, ctx := errgroup.WithContext(ctx)
+
+	type cbd struct {
+		ns   string
+		name string
+		evt  int
 	}
 
-	if err := c.waitNamespaceReadyRS(ctx, name, cb); err != nil {
-		return err
+	events := make(chan cbd)
+
+	for _, n := range ns {
+		egroup.Go(func() error {
+			err := c.waitNamespaceReadyDS(ctx, n, func(name string, state bool) {
+				evt := 0
+				if state {
+					evt = 1
+				}
+
+				events <- cbd{
+					ns:   n,
+					name: name,
+					evt:  evt,
+				}
+			})
+
+			events <- cbd{
+				ns:  n,
+				evt: -1,
+			}
+
+			return err
+		})
+
+		egroup.Go(func() error {
+			err := c.waitNamespaceReadyRS(ctx, n, func(name string, state bool) {
+				evt := 0
+				if state {
+					evt = 1
+				}
+
+				events <- cbd{
+					ns:   n,
+					name: name,
+					evt:  evt,
+				}
+			})
+
+			events <- cbd{
+				ns:  n,
+				evt: -1,
+			}
+
+			return err
+		})
 	}
 
-	return nil
+	egroup.Go(func() error {
+		done := 0
+
+		var notReady []string
+
+		for {
+			select {
+			case evt := <-events:
+				if evt.evt == -1 {
+					done++
+				} else if evt.evt == 0 {
+					name := evt.ns + "/" + evt.name
+
+					if !slices.Contains(notReady, name) {
+						notReady = append(notReady, name)
+						slices.Sort(notReady)
+					}
+				} else if evt.evt == 1 {
+					var newReady []string
+
+					for _, s := range notReady {
+						if s == evt.ns+"/"+evt.name {
+							continue
+						}
+
+						newReady = append(newReady, s)
+					}
+
+					notReady = newReady
+				}
+
+				if done == len(ns)*2 {
+					return nil
+				}
+
+				cb(slices.Clone(notReady))
+
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	})
+
+	return egroup.Wait()
 }
 
-func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb func(names []string)) error {
+func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb func(name string, state bool)) error {
 	wi, err := c.clientset.AppsV1().DaemonSets(name).Watch(ctx, metav1.ListOptions{
 		Watch:                true,
 		AllowWatchBookmarks:  true,
@@ -221,6 +313,7 @@ func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb fu
 				}
 
 				statuses[ds.Name] = ds.Status.DesiredNumberScheduled == ds.Status.NumberReady
+				cb(ds.Name, statuses[ds.Name])
 
 			case watch.Deleted:
 				ds, ok := v.Object.(*v1.DaemonSet)
@@ -229,6 +322,7 @@ func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb fu
 				}
 
 				delete(statuses, ds.Name)
+				cb(ds.Name, true)
 
 			case watch.Error:
 				return fmt.Errorf("watch err: %v", v.Object)
@@ -238,28 +332,25 @@ func (c *K8sClient) waitNamespaceReadyDS(ctx context.Context, name string, cb fu
 			}
 
 			if hadBookmark {
-				var notReady []string
+				notReady := false
 
-				for n, b := range statuses {
+				for _, b := range statuses {
 					if !b {
-						notReady = append(notReady, n)
+						notReady = true
+						break
 					}
 				}
 
-				slices.Sort(notReady)
-
-				if len(notReady) == 0 {
+				if !notReady {
 					return nil
 				}
-
-				cb(notReady)
 			}
 		case <-ctx.Done():
 		}
 	}
 }
 
-func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb func(names []string)) error {
+func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb func(name string, state bool)) error {
 	wi, err := c.clientset.AppsV1().ReplicaSets(name).Watch(ctx, metav1.ListOptions{
 		Watch:                true,
 		AllowWatchBookmarks:  true,
@@ -292,6 +383,7 @@ func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb fu
 				}
 
 				statuses[ds.Name] = ds.Status.Replicas == ds.Status.ReadyReplicas
+				cb(ds.Name, statuses[ds.Name])
 
 			case watch.Deleted:
 				ds, ok := v.Object.(*v1.ReplicaSet)
@@ -309,21 +401,18 @@ func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb fu
 			}
 
 			if hadBookmark {
-				var notReady []string
+				notReady := false
 
-				for n, b := range statuses {
+				for _, b := range statuses {
 					if !b {
-						notReady = append(notReady, n)
+						notReady = true
+						break
 					}
 				}
 
-				slices.Sort(notReady)
-
-				if len(notReady) == 0 {
+				if !notReady {
 					return nil
 				}
-
-				cb(notReady)
 			}
 		case <-ctx.Done():
 		}

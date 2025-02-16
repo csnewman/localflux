@@ -45,6 +45,10 @@ func NewMinikubeProvider(logger *slog.Logger, c *Minikube, cfg config.Cluster) *
 	}
 }
 
+func (p *MinikubeProvider) Name() string {
+	return "minikube"
+}
+
 func (p *MinikubeProvider) ProfileName() string {
 	name := p.cfg.Minikube.Profile
 	if name != "" {
@@ -75,7 +79,7 @@ func (p *MinikubeProvider) Status(ctx context.Context) (Status, error) {
 	}
 }
 
-func (p *MinikubeProvider) Create(ctx context.Context) error {
+func (p *MinikubeProvider) Create(ctx context.Context, cb ProviderCallbacks) error {
 	status, err := p.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
@@ -85,14 +89,14 @@ func (p *MinikubeProvider) Create(ctx context.Context) error {
 		return ErrAlreadyExists
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName()); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
-	return p.configureCommon(ctx)
+	return p.configureCommon(ctx, cb)
 }
 
-func (p *MinikubeProvider) Start(ctx context.Context) error {
+func (p *MinikubeProvider) Start(ctx context.Context, cb ProviderCallbacks) error {
 	status, err := p.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
@@ -102,14 +106,14 @@ func (p *MinikubeProvider) Start(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrInvalidState, status)
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName()); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
-	return p.configureCommon(ctx)
+	return p.configureCommon(ctx, cb)
 }
 
-func (p *MinikubeProvider) Reconfigure(ctx context.Context) error {
+func (p *MinikubeProvider) Reconfigure(ctx context.Context, cb ProviderCallbacks) error {
 	status, err := p.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
@@ -119,7 +123,7 @@ func (p *MinikubeProvider) Reconfigure(ctx context.Context) error {
 		return fmt.Errorf("%w: %v", ErrInvalidState, status)
 	}
 
-	return p.configureCommon(ctx)
+	return p.configureCommon(ctx, cb)
 }
 
 const registryAliases = "registry-aliases"
@@ -131,7 +135,9 @@ var requiredMinikubeAddons = []string{
 	registryAliases,
 }
 
-func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
+func (p *MinikubeProvider) configureCommon(ctx context.Context, cb ProviderCallbacks) error {
+	cb.NotifyStep("Checking addons")
+
 	profile := p.ProfileName()
 
 	addons, err := p.c.Addons(ctx, profile)
@@ -165,6 +171,8 @@ func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
 
 		p.logger.Info("Enabling addon", "name", name)
 
+		cb.NotifyStep("Enabling addon: " + name)
+
 		if name == registryAliases && len(p.cfg.Minikube.RegistryAliases) > 0 {
 			if err := p.c.ConfigureRegistryAliases(ctx, profile, name, p.cfg.Minikube.RegistryAliases); err != nil {
 				return fmt.Errorf("failed to configure addon %q: %w", name, err)
@@ -174,6 +182,8 @@ func (p *MinikubeProvider) configureCommon(ctx context.Context) error {
 		if err := p.c.EnableAddon(ctx, profile, name); err != nil {
 			return fmt.Errorf("failed to enable addon %q: %w", name, err)
 		}
+
+		cb.NotifySuccess("Enabled addon: " + name)
 	}
 
 	return nil
@@ -234,7 +244,7 @@ func NewMinikube(logger *slog.Logger) *Minikube {
 	}
 }
 
-func (m *Minikube) Start(ctx context.Context, profile string) error {
+func (m *Minikube) Start(ctx context.Context, profile string, cb ProviderCallbacks) error {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
 	c := exec.CommandContext(ctx, "minikube")
@@ -258,7 +268,7 @@ func (m *Minikube) Start(ctx context.Context, profile string) error {
 	errgrp.Go(func() error {
 		return m.processOutput(pr, func(line string) (bool, error) {
 			return false, nil
-		})
+		}, cb)
 	})
 
 	errgrp.Go(func() error {
@@ -321,7 +331,7 @@ func (m *Minikube) Profiles(ctx context.Context) (map[string]MinikubeProfile, er
 			}
 
 			return true, nil
-		})
+		}, ProviderCallbacks{})
 	})
 
 	errgrp.Go(func() error {
@@ -384,7 +394,7 @@ func (m *Minikube) Addons(ctx context.Context, profile string) (map[string]bool,
 			}
 
 			return found, nil
-		})
+		}, ProviderCallbacks{})
 	})
 
 	errgrp.Go(func() error {
@@ -500,7 +510,7 @@ func (m *Minikube) IP(ctx context.Context, profile string) (net.IP, error) {
 	return ip, nil
 }
 
-func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) (bool, error)) error {
+func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) (bool, error), cb ProviderCallbacks) error {
 	scanner := bufio.NewScanner(pr)
 	for scanner.Scan() {
 		text := scanner.Text()
@@ -536,6 +546,8 @@ func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) 
 
 			m.logger.Info("Minikube step", "step", data["name"])
 
+			cb.NotifyStep(data["name"])
+
 		case "io.k8s.sigs.minikube.info":
 			var data map[string]string
 			err := event.DataAs(&data)
@@ -555,6 +567,8 @@ func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) 
 
 			m.logger.Info("Minikube warning", "msg", data["message"])
 
+			cb.NotifyWarning(data["message"])
+
 		case "io.k8s.sigs.minikube.error":
 			var data map[string]string
 			err := event.DataAs(&data)
@@ -564,6 +578,8 @@ func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) 
 			}
 
 			m.logger.Info("Minikube error", "msg", data["message"])
+
+			cb.NotifyError(data["message"])
 
 		default:
 			m.logger.Error("Unknown event type", "event", event.Type())
