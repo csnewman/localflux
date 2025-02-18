@@ -127,7 +127,7 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 			"context":    cxtLocalMount,
 			"dockerfile": dockerfileLocalMount,
 		},
-		Frontend:      "gateway.v0",
+		Frontend:      "dockerfile.v0",
 		FrontendAttrs: frontendAttrs,
 	}
 
