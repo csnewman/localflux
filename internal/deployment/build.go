@@ -3,8 +3,6 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"github.com/opencontainers/go-digest"
-	"golang.org/x/sync/errgroup"
 	"io"
 	"log/slog"
 	"net"
@@ -17,10 +15,17 @@ import (
 	"time"
 
 	"github.com/csnewman/localflux/internal/config"
+	dockerconfig "github.com/docker/cli/cli/config"
+	"github.com/docker/cli/cli/config/credentials"
 	"github.com/docker/cli/cli/connhelper/commandconn"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/connhelper"
+	"github.com/moby/buildkit/cmd/buildctl/build"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/opencontainers/go-digest"
 	"github.com/tonistiigi/fsutil"
+	"golang.org/x/sync/errgroup"
 )
 
 func init() {
@@ -37,9 +42,10 @@ func init() {
 }
 
 type Builder struct {
-	logger *slog.Logger
-	cfg    config.BuildKit
-	c      *client.Client
+	logger     *slog.Logger
+	cfg        config.BuildKit
+	c          *client.Client
+	attachable []session.Attachable
 }
 
 func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (*Builder, error) {
@@ -56,10 +62,27 @@ func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (
 		return nil, fmt.Errorf("failed to connect to buildkit: %w", err)
 	}
 
+	dockerConfig, err := dockerconfig.Load(cfg.DockerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load docker config: %w", err)
+	}
+
+	if !dockerConfig.ContainsAuth() {
+		dockerConfig.CredentialsStore = credentials.DetectDefaultStore(dockerConfig.CredentialsStore)
+	}
+
+	tlsConfigs, err := build.ParseRegistryAuthTLSContext(cfg.RegistryAuthTLSContext)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse registry tls auth context: %w", err)
+	}
+
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, tlsConfigs)}
+
 	return &Builder{
-		logger: logger,
-		cfg:    cfg,
-		c:      c,
+		logger:     logger,
+		cfg:        cfg,
+		c:          c,
+		attachable: attachable,
 	}, nil
 }
 
@@ -127,8 +150,9 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 			"context":    cxtLocalMount,
 			"dockerfile": dockerfileLocalMount,
 		},
-		Frontend:      "dockerfile.v0",
+		Frontend:      "gateway.v0",
 		FrontendAttrs: frontendAttrs,
+		Session:       b.attachable,
 	}
 
 	statusChan := make(chan *client.SolveStatus)

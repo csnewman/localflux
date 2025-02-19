@@ -28,7 +28,9 @@ type Minikube struct {
 }
 
 type BuildKit struct {
-	Address string `json:"address"`
+	Address                string   `json:"address"`
+	RegistryAuthTLSContext []string `json:"registryAuthTLSContext"`
+	DockerConfig           string   `json:"dockerConfig"`
 }
 
 type Deployment struct {
