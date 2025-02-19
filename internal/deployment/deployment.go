@@ -216,7 +216,7 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 var nameRegex = regexp.MustCompile("[^a-zA-Z0-9]")
 
 func fixName(name string) string {
-	return nameRegex.ReplaceAllString(name, "_")
+	return nameRegex.ReplaceAllString(name, "-")
 }
 
 func (m *Manager) deployKustomize(
