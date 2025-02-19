@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sigs.k8s.io/yaml"
+	"strings"
 	"time"
 
 	"github.com/csnewman/localflux/internal/cluster"
@@ -403,6 +404,12 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 	if step.Helm.Repo != "" {
 		cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying repo", start)
 
+		repoType := ""
+
+		if strings.HasPrefix(strings.ToLower(step.Helm.Repo), "oci://") {
+			repoType = "oci"
+		}
+
 		if err := kc.PatchSSA(ctx, &sourcev1b2.HelmRepository{
 			TypeMeta: metav1.TypeMeta{
 				Kind:       sourcev1b2.HelmRepositoryKind,
@@ -413,7 +420,8 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 				Namespace: cluster.LFNamespace,
 			},
 			Spec: sourcev1b2.HelmRepositorySpec{
-				URL: step.Helm.Repo,
+				URL:  step.Helm.Repo,
+				Type: repoType,
 				//SecretRef:       nil,
 				//CertSecretRef:   nil,
 				//PassCredentials: false,
