@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"log"
 	"log/slog"
 	"os"
 
@@ -32,7 +34,10 @@ See https://github.com/csnewman/localflux
 				}))
 			} else {
 				logger = slog.New(slog.DiscardHandler)
+				log.SetOutput(io.Discard)
 			}
+
+			slog.SetDefault(logger)
 
 			return nil
 		},

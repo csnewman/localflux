@@ -30,8 +30,9 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("deployment not found")
-	ErrInvalid  = errors.New("invalid deployment")
+	ErrInvalidCluster = errors.New("invalid cluster")
+	ErrNotFound       = errors.New("deployment not found")
+	ErrInvalid        = errors.New("invalid deployment")
 )
 
 type Manager struct {
@@ -96,6 +97,17 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 	m.logger.Info("Deploying", "name", deployment.Name)
 
 	cb.Info(fmt.Sprintf("Deploying %q to %q", deployment.Name, clusterName))
+
+	clusterStatus, err := provider.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to check cluster status: %w", err)
+	}
+
+	if clusterStatus != cluster.StatusActive {
+		cb.Error("Cluster is not in an active state")
+
+		return fmt.Errorf("%w: cluster is not in active state", ErrInvalidCluster)
+	}
 
 	regTrans, regAuth, err := provider.RegistryConn(ctx)
 	if err != nil {

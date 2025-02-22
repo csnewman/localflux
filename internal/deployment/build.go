@@ -175,25 +175,20 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 
 	errgrp.Go(func() error {
 		for {
-			select {
-			case msg, ok := <-statusChan:
-				if !ok {
-					bg.Mu.Lock()
-					bg.Final = true
-					bg.Mu.Unlock()
-
-					fn(bg)
-
-					return nil
-				}
-
-				processStatus(bg, msg)
+			msg, ok := <-statusChan
+			if !ok {
+				bg.Mu.Lock()
+				bg.Final = true
+				bg.Mu.Unlock()
 
 				fn(bg)
 
-			case <-ctx.Done():
-				return ctx.Err()
+				return nil
 			}
+
+			processStatus(bg, msg)
+
+			fn(bg)
 		}
 	})
 

@@ -46,7 +46,7 @@ func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallback
 
 	g, gctx := errgroup.WithContext(outerCtx)
 
-	p := tea.NewProgram(newModel(), tea.WithContext(ctx))
+	p := tea.NewProgram(newModel(cancel), tea.WithContext(ctx))
 	defer p.Quit()
 
 	g.Go(func() error {
@@ -58,8 +58,6 @@ func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallback
 	})
 
 	g.Go(func() error {
-		//defer
-
 		err := fn(gctx, &uiCallbacks{
 			p: p,
 		})
@@ -78,13 +76,14 @@ func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallback
 
 type model struct {
 	spinner    spinner.Model
-	quitting   bool
+	cleanExit  bool
 	state      *stateData
 	width      int
 	buildGraph *deployment.BuildGraph
+	exitFunc   func()
 }
 
-func newModel() model {
+func newModel(exitFunc func()) model {
 	s := spinner.New()
 	s.Style = spinnerStyle
 	return model{
@@ -94,6 +93,7 @@ func newModel() model {
 			detail: "...",
 			start:  time.Now(),
 		},
+		exitFunc: exitFunc,
 	}
 }
 
@@ -109,15 +109,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc", "q":
-			m.quitting = true
-			return m, tea.Quit
+			m.exitFunc()
 		}
 
 		return m, nil
 	case *stateData:
 		if msg.exit {
 			if msg.exitErr == nil {
-				m.quitting = true
+				m.cleanExit = true
 			}
 
 			return m, tea.Quit
@@ -138,70 +137,70 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.cleanExit {
+		return ""
+	}
+
 	var s string
 
-	if m.quitting {
-		return ""
-	} else {
-		s += m.spinner.View() + " " + m.state.msg + " " + durationStyle.Render(time.Since(m.state.start).Round(time.Second).String())
+	s += m.spinner.View() + " " + m.state.msg + " " + durationStyle.Render(time.Since(m.state.start).Round(time.Second).String())
 
-		if m.state.detail != "" {
-			s += "\n" + detailStyle.Width(m.width).Render(m.state.detail)
-		}
+	if m.state.detail != "" {
+		s += "\n" + detailStyle.Width(m.width).Render(m.state.detail)
+	}
 
-		if m.buildGraph != nil {
-			m.buildGraph.Mu.Lock()
-			defer m.buildGraph.Mu.Unlock()
+	if m.buildGraph != nil {
+		m.buildGraph.Mu.Lock()
+		defer m.buildGraph.Mu.Unlock()
 
-			s += "\n" + detailStyle.Width(m.width).Render("----")
+		s += "\n" + detailStyle.Width(m.width).Render("----")
 
-			for _, id := range m.buildGraph.NodeOrder {
-				n := m.buildGraph.Nodes[id]
+		for _, id := range m.buildGraph.NodeOrder {
+			n := m.buildGraph.Nodes[id]
+
+			completed := time.Now()
+
+			if n.Completed != nil {
+				completed = *n.Completed
+			}
+
+			dur := completed.Sub(*n.Started).Round(time.Second)
+
+			s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("%s %s %s", n.Name, dur.String(), n.Error))
+
+			for _, sid := range n.StatusOrder {
+				st := n.Statuses[sid]
 
 				completed := time.Now()
 
-				if n.Completed != nil {
-					completed = *n.Completed
+				if st.Completed != nil {
+					completed = *st.Completed
 				}
 
-				dur := completed.Sub(*n.Started).Round(time.Second)
+				dur := completed.Sub(*st.Started).Round(time.Second)
 
-				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("%s %s %s", n.Name, dur.String(), n.Error))
+				var v string
 
-				for _, sid := range n.StatusOrder {
-					st := n.Statuses[sid]
-
-					completed := time.Now()
-
-					if st.Completed != nil {
-						completed = *st.Completed
-					}
-
-					dur := completed.Sub(*st.Started).Round(time.Second)
-
-					var v string
-
-					if st.Current != 0 || st.Total != 0 {
-						v = fmt.Sprintf("[%d/%d]", st.Current, st.Total)
-					}
-
-					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("| %s %s %s", sid, dur.String(), v))
+				if st.Current != 0 || st.Total != 0 {
+					v = fmt.Sprintf("[%d/%d]", st.Current, st.Total)
 				}
 
-				if len(n.Logs) > 0 {
-					for l := range strings.Lines(string(n.Logs)) {
-						s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("> %s", l))
-					}
-				}
+				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("| %s %s %s", sid, dur.String(), v))
+			}
 
-				for _, warning := range n.Warnings {
-					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("! %s", string(warning.Short)))
+			if len(n.Logs) > 0 {
+				for l := range strings.Lines(string(n.Logs)) {
+					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("> %s", l))
 				}
 			}
-		}
 
-		s += "\n"
+			for _, warning := range n.Warnings {
+				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("! %s", string(warning.Short)))
+			}
+		}
 	}
+
+	s += "\n"
 
 	return s
 }
