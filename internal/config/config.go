@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"os"
 
 	"github.com/csnewman/localflux/internal/config/v1alpha1"
@@ -21,7 +22,7 @@ type (
 var ErrUnknownVersion = errors.New("unknown version")
 
 type Wrapper struct {
-	Version string `json:"apiVersion"`
+	metav1.TypeMeta `json:",inline"`
 }
 
 func Load(path string) (Config, error) {
@@ -36,8 +37,18 @@ func Load(path string) (Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal: %w", err)
 	}
 
-	if w.Version != v1alpha1.Version {
-		return nil, fmt.Errorf("%w: %s", ErrUnknownVersion, w.Version)
+	gvk := w.GroupVersionKind()
+
+	if gvk.Group != v1alpha1.GroupVersion.Group {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownVersion, gvk.Group)
+	}
+
+	if gvk.Version != v1alpha1.GroupVersion.Version {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownVersion, gvk.Version)
+	}
+
+	if gvk.Kind != "Config" {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownVersion, gvk.Kind)
 	}
 
 	var cfg v1alpha1.Config

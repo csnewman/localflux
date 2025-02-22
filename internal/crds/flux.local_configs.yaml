@@ -1,0 +1,300 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.2
+  name: configs.flux.local
+spec:
+  group: flux.local
+  names:
+    kind: Config
+    listKind: ConfigList
+    plural: configs
+    singular: config
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Config represents the project config.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          clusters:
+            description: Clusters is the list of clusters to connect to.
+            items:
+              properties:
+                buildkit:
+                  properties:
+                    address:
+                      type: string
+                    dockerConfig:
+                      type: string
+                    registryAuthTLSContext:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                minikube:
+                  properties:
+                    addons:
+                      items:
+                        type: string
+                      type: array
+                    portForward:
+                      type: boolean
+                    profile:
+                      type: string
+                    registryAliases:
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                name:
+                  description: Name is the cluster name.
+                  maxLength: 63
+                  minLength: 1
+                  type: string
+              required:
+              - name
+              type: object
+            minItems: 1
+            type: array
+          defaultCluster:
+            description: DefaultCluster is the name of the cluster to use if one is
+              not specified.
+            maxLength: 63
+            minLength: 1
+            type: string
+          deployments:
+            items:
+              properties:
+                images:
+                  items:
+                    properties:
+                      buildArgs:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      context:
+                        type: string
+                      file:
+                        type: string
+                      image:
+                        type: string
+                      target:
+                        type: string
+                    required:
+                    - image
+                    type: object
+                  type: array
+                name:
+                  description: Name is the deployment name.
+                  maxLength: 63
+                  minLength: 1
+                  type: string
+                steps:
+                  items:
+                    properties:
+                      helm:
+                        properties:
+                          chart:
+                            type: string
+                          context:
+                            type: string
+                          ignorePaths:
+                            items:
+                              type: string
+                            type: array
+                          namespace:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          patches:
+                            items:
+                              description: |-
+                                Patch contains an inline StrategicMerge or JSON6902 patch, and the target the patch should
+                                be applied to.
+                              properties:
+                                patch:
+                                  description: |-
+                                    Patch contains an inline StrategicMerge patch or an inline JSON6902 patch with
+                                    an array of operation objects.
+                                  type: string
+                                target:
+                                  description: Target points to the resources that
+                                    the patch document should be applied to.
+                                  properties:
+                                    annotationSelector:
+                                      description: |-
+                                        AnnotationSelector is a string that follows the label selection expression
+                                        https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#api
+                                        It matches with the resource annotations.
+                                      type: string
+                                    group:
+                                      description: |-
+                                        Group is the API group to select resources from.
+                                        Together with Version and Kind it is capable of unambiguously identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                    kind:
+                                      description: |-
+                                        Kind of the API Group to select resources from.
+                                        Together with Group and Version it is capable of unambiguously
+                                        identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                    labelSelector:
+                                      description: |-
+                                        LabelSelector is a string that follows the label selection expression
+                                        https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#api
+                                        It matches with the resource labels.
+                                      type: string
+                                    name:
+                                      description: Name to match resources with.
+                                      type: string
+                                    namespace:
+                                      description: Namespace to select resources from.
+                                      type: string
+                                    version:
+                                      description: |-
+                                        Version of the API Group to select resources from.
+                                        Together with Group and Kind it is capable of unambiguously identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                  type: object
+                              required:
+                              - patch
+                              type: object
+                            type: array
+                          repo:
+                            type: string
+                          valueFiles:
+                            items:
+                              type: string
+                            type: array
+                          values:
+                            x-kubernetes-preserve-unknown-fields: true
+                          version:
+                            type: string
+                        required:
+                        - chart
+                        - version
+                        type: object
+                      kustomize:
+                        properties:
+                          components:
+                            items:
+                              type: string
+                            type: array
+                          context:
+                            type: string
+                          ignorePaths:
+                            items:
+                              type: string
+                            type: array
+                          namespace:
+                            maxLength: 63
+                            minLength: 1
+                            type: string
+                          patches:
+                            items:
+                              description: |-
+                                Patch contains an inline StrategicMerge or JSON6902 patch, and the target the patch should
+                                be applied to.
+                              properties:
+                                patch:
+                                  description: |-
+                                    Patch contains an inline StrategicMerge patch or an inline JSON6902 patch with
+                                    an array of operation objects.
+                                  type: string
+                                target:
+                                  description: Target points to the resources that
+                                    the patch document should be applied to.
+                                  properties:
+                                    annotationSelector:
+                                      description: |-
+                                        AnnotationSelector is a string that follows the label selection expression
+                                        https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#api
+                                        It matches with the resource annotations.
+                                      type: string
+                                    group:
+                                      description: |-
+                                        Group is the API group to select resources from.
+                                        Together with Version and Kind it is capable of unambiguously identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                    kind:
+                                      description: |-
+                                        Kind of the API Group to select resources from.
+                                        Together with Group and Version it is capable of unambiguously
+                                        identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                    labelSelector:
+                                      description: |-
+                                        LabelSelector is a string that follows the label selection expression
+                                        https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/#api
+                                        It matches with the resource labels.
+                                      type: string
+                                    name:
+                                      description: Name to match resources with.
+                                      type: string
+                                    namespace:
+                                      description: Namespace to select resources from.
+                                      type: string
+                                    version:
+                                      description: |-
+                                        Version of the API Group to select resources from.
+                                        Together with Group and Kind it is capable of unambiguously identifying and/or selecting resources.
+                                        https://github.com/kubernetes/community/blob/master/contributors/design-proposals/api-machinery/api-group.md
+                                      type: string
+                                  type: object
+                              required:
+                              - patch
+                              type: object
+                            type: array
+                          path:
+                            type: string
+                          substitute:
+                            additionalProperties:
+                              type: string
+                            type: object
+                        required:
+                        - context
+                        type: object
+                      name:
+                        description: Name is the step name.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  type: array
+              required:
+              - name
+              type: object
+            type: array
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+        required:
+        - clusters
+        - defaultCluster
+        type: object
+    served: true
+    storage: true

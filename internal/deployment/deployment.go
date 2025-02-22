@@ -369,7 +369,7 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Reading values", start)
 
-	values := make(map[string]interface{})
+	values := make(map[string]any)
 
 	for _, file := range step.Helm.ValueFiles {
 		data, err := os.ReadFile(file)
@@ -382,7 +382,7 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 			return fmt.Errorf("failed to read file %q: %w", file, err)
 		}
 
-		var extraValues map[string]interface{}
+		var extraValues map[string]any
 
 		if err := json.Unmarshal(rawJSON, &extraValues); err != nil {
 			return fmt.Errorf("failed to read file %q: %w", file, err)
@@ -392,7 +392,13 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 	}
 
 	if step.Helm.Values != nil {
-		values = chartutil.MergeMaps(values, step.Helm.Values)
+		var extraValues map[string]any
+
+		if err := json.Unmarshal(step.Helm.Values.Raw, &extraValues); err != nil {
+			return fmt.Errorf("failed to parse values: %w", err)
+		}
+
+		values = chartutil.MergeMaps(values, extraValues)
 	}
 
 	encodedValues, err := json.Marshal(values)

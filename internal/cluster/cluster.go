@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/csnewman/localflux/internal/config"
+	"github.com/csnewman/localflux/internal/crds"
 	"github.com/google/go-containerregistry/pkg/authn"
 )
 
@@ -221,6 +222,18 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 	}
 
 	cb.Completed("Flux configured", time.Since(start))
+
+	start = time.Now()
+
+	m.logger.Info("Applying localflux manifests")
+
+	cb.State("Configuring localflux", "Applying", start)
+
+	if err := kc.Apply(ctx, crds.Configs); err != nil {
+		return fmt.Errorf("failed to apply flux manifests: %w", err)
+	}
+
+	cb.Completed("Manifests configured", time.Since(start))
 
 	start = time.Now()
 

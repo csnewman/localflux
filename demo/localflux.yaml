@@ -1,4 +1,4 @@
-apiVersion: localflux/v1alpha1
+apiVersion: flux.local/v1alpha1
 kind: Config
 defaultCluster: minikube
 clusters:
