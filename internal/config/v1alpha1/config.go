@@ -168,7 +168,9 @@ type PortForward struct {
 	// +kubebuilder:validation:MaxLength=63
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
-	Port      int    `json:"port"`
+	// +optional
+	Network string `json:"network"`
+	Port    int    `json:"port"`
 	// +optional
 	LocalPort *int `json:"localPort"`
 }

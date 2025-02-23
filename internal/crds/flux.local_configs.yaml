@@ -114,6 +114,8 @@ spec:
                         maxLength: 63
                         minLength: 1
                         type: string
+                      network:
+                        type: string
                       port:
                         type: integer
                     required:

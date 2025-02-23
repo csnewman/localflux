@@ -56,6 +56,7 @@ type PortForward struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
 	Port      int    `json:"port"`
+	Network   string `json:"network"`
 	// +optional
 	LocalPort *int `json:"localPort,omitempty"`
 }

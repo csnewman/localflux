@@ -286,10 +286,16 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 	var mappedPorts []*v1alpha1.PortForward
 
 	for _, forward := range deployment.PortForward {
+		net := "tcp"
+		if forward.Network != "" {
+			net = strings.ToLower(forward.Network)
+		}
+
 		mappedPorts = append(mappedPorts, &v1alpha1.PortForward{
 			Kind:      forward.Kind,
 			Namespace: forward.Namespace,
 			Name:      forward.Name,
+			Network:   net,
 			Port:      forward.Port,
 			LocalPort: forward.LocalPort,
 		})

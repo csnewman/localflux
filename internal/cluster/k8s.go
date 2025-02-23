@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/httpstream"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/discovery"
 	memory "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
@@ -56,12 +57,14 @@ func init() {
 }
 
 type K8sClient struct {
-	clientset  *kubernetes.Clientset
-	dyn        *dynamic.DynamicClient
-	mapper     *restmapper.DeferredDiscoveryRESTMapper
-	controller controllerclient.Client
-	config     *rest.Config
-	restClient *restclient.RESTClient
+	clientset       *kubernetes.Clientset
+	dyn             *dynamic.DynamicClient
+	mapper          *restmapper.DeferredDiscoveryRESTMapper
+	controller      controllerclient.Client
+	config          *rest.Config
+	restClient      *restclient.RESTClient
+	cachedDiscovery discovery.CachedDiscoveryInterface
+	rawConfig       cmdapi.Config
 }
 
 func GetFlattenedConfig(path string, name string) (*cmdapi.Config, error) {
@@ -106,15 +109,20 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 		},
 	)
 
+	rawConfig, err := loader.RawConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load raw config: %w", err)
+	}
+
 	config, err := loader.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	return NewK8sClientFromConfig(config)
+	return NewK8sClientFromConfig(config, rawConfig)
 }
 
-func NewK8sClientFromConfig(config *rest.Config) (*K8sClient, error) {
+func NewK8sClientFromConfig(config *restclient.Config, rawConfig cmdapi.Config) (*K8sClient, error) {
 	if err := sourcev1b2.AddToScheme(clientsetscheme.Scheme); err != nil {
 		return nil, fmt.Errorf("failed to load scheme: %w", err)
 	}
@@ -152,7 +160,8 @@ func NewK8sClientFromConfig(config *rest.Config) (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to create: %w", err)
 	}
 
-	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(clientset.Discovery()))
+	cachedDiscovery := memory.NewMemCacheClient(clientset.Discovery())
+	mapper := restmapper.NewDeferredDiscoveryRESTMapper(cachedDiscovery)
 
 	if err := setKubernetesDefaults(config); err != nil {
 		return nil, fmt.Errorf("failed to setKubernetesDefaults: %w", err)
@@ -164,12 +173,14 @@ func NewK8sClientFromConfig(config *rest.Config) (*K8sClient, error) {
 	}
 
 	return &K8sClient{
-		clientset:  clientset,
-		dyn:        dyn,
-		mapper:     mapper,
-		controller: controller,
-		config:     config,
-		restClient: restClient,
+		clientset:       clientset,
+		dyn:             dyn,
+		cachedDiscovery: cachedDiscovery,
+		mapper:          mapper,
+		controller:      controller,
+		config:          config,
+		restClient:      restClient,
+		rawConfig:       rawConfig,
 	}, nil
 }
 
@@ -493,6 +504,34 @@ func (c *K8sClient) ClientSet() *kubernetes.Clientset {
 
 func (c *K8sClient) Controller() controllerclient.Client {
 	return c.controller
+}
+
+func (c *K8sClient) Dyn() *dynamic.DynamicClient {
+	return c.dyn
+}
+
+func (c *K8sClient) RestClient() *restclient.RESTClient {
+	return c.restClient
+}
+
+func (c *K8sClient) Mapper() *restmapper.DeferredDiscoveryRESTMapper {
+	return c.mapper
+}
+
+func (c *K8sClient) ToRESTConfig() (*restclient.Config, error) {
+	return c.config, nil
+}
+
+func (c *K8sClient) ToDiscoveryClient() (discovery.CachedDiscoveryInterface, error) {
+	return c.cachedDiscovery, nil
+}
+
+func (c *K8sClient) ToRESTMapper() (meta.RESTMapper, error) {
+	return c.mapper, nil
+}
+
+func (c *K8sClient) ToRawKubeConfigLoader() clientcmd.ClientConfig {
+	return clientcmd.NewNonInteractiveClientConfig(c.rawConfig, c.rawConfig.CurrentContext, &clientcmd.ConfigOverrides{}, nil)
 }
 
 func setKubernetesDefaults(config *rest.Config) error {

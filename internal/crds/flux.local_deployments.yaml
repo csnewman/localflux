@@ -55,12 +55,15 @@ spec:
                   type: string
                 namespace:
                   type: string
+                network:
+                  type: string
                 port:
                   type: integer
               required:
               - kind
               - name
               - namespace
+              - network
               - port
               type: object
             type: array
