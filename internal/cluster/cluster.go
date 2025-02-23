@@ -231,7 +231,7 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 
 	cb.State("Configuring localflux", "Applying", start)
 
-	if err := kc.Apply(ctx, crds.Configs); err != nil {
+	if err := kc.Apply(ctx, crds.All); err != nil {
 		return fmt.Errorf("failed to apply flux manifests: %w", err)
 	}
 

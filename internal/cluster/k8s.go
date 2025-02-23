@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aojea/rwconn"
+	"github.com/csnewman/localflux/internal/deployment/v1alpha1"
+	helmv2 "github.com/fluxcd/helm-controller/api/v2"
+	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
 	"github.com/go-logr/logr"
 	"golang.org/x/sync/errgroup"
@@ -113,6 +116,22 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 
 func NewK8sClientFromConfig(config *rest.Config) (*K8sClient, error) {
 	if err := sourcev1b2.AddToScheme(clientsetscheme.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to load scheme: %w", err)
+	}
+
+	if err := v1alpha1.AddToScheme(clientsetscheme.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to load scheme: %w", err)
+	}
+
+	if err := kustomizev1.AddToScheme(clientsetscheme.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to load scheme: %w", err)
+	}
+
+	if err := sourcev1b2.AddToScheme(clientsetscheme.Scheme); err != nil {
+		return nil, fmt.Errorf("failed to load scheme: %w", err)
+	}
+
+	if err := helmv2.AddToScheme(clientsetscheme.Scheme); err != nil {
 		return nil, fmt.Errorf("failed to load scheme: %w", err)
 	}
 
@@ -470,6 +489,10 @@ func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb fu
 
 func (c *K8sClient) ClientSet() *kubernetes.Clientset {
 	return c.clientset
+}
+
+func (c *K8sClient) Controller() controllerclient.Client {
+	return c.controller
 }
 
 func setKubernetesDefaults(config *rest.Config) error {

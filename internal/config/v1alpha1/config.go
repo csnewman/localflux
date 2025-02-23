@@ -96,6 +96,8 @@ type Deployment struct {
 	Images []*Image `json:"images"`
 	// +optional
 	Steps []*Step `json:"steps"`
+	// +optional
+	PortForward []*PortForward `json:"portForward"`
 }
 
 type Image struct {
@@ -158,4 +160,15 @@ type Helm struct {
 	Values *apiextensionsv1.JSON `json:"values"`
 	// +optional
 	ValueFiles []string `json:"valueFiles"`
+}
+
+type PortForward struct {
+	Kind string `json:"kind"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	Port      int    `json:"port"`
+	// +optional
+	LocalPort *int `json:"localPort"`
 }

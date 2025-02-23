@@ -101,6 +101,28 @@ spec:
                   maxLength: 63
                   minLength: 1
                   type: string
+                portForward:
+                  items:
+                    properties:
+                      kind:
+                        type: string
+                      localPort:
+                        type: integer
+                      name:
+                        type: string
+                      namespace:
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                      port:
+                        type: integer
+                    required:
+                    - kind
+                    - name
+                    - namespace
+                    - port
+                    type: object
+                  type: array
                 steps:
                   items:
                     properties:

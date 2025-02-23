@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
-	
+
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
