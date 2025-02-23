@@ -6,14 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"golang.org/x/sync/errgroup"
-	"io"
-	"path/filepath"
-	"slices"
-	"strings"
-
+	"github.com/aojea/rwconn"
 	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
 	"github.com/go-logr/logr"
+	"golang.org/x/sync/errgroup"
+	"io"
 	v1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -21,32 +18,35 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/runtime/serializer/yaml"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/httpstream"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apimachinery/pkg/watch"
 	memory "k8s.io/client-go/discovery/cached"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clientsetscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
+	restclient "k8s.io/client-go/rest"
 	"k8s.io/client-go/restmapper"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/client-go/util/homedir"
+	cmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/tools/portforward"
+	"k8s.io/client-go/transport/spdy"
+	"net"
+	"net/http"
 	controllerclient "sigs.k8s.io/controller-runtime/pkg/client"
 	controllerlog "sigs.k8s.io/controller-runtime/pkg/log"
+	"slices"
+	"strings"
 )
 
 const LFNamespace = "localflux"
 
 var decUnstructured = yaml.NewDecodingSerializer(unstructured.UnstructuredJSONScheme)
-
-func DefaultKubeConfigPath() string {
-	if home := homedir.HomeDir(); home != "" {
-		return filepath.Join(home, ".kube", "config")
-	}
-
-	return ""
-}
 
 func init() {
 	controllerlog.SetLogger(logr.Discard())
@@ -57,21 +57,61 @@ type K8sClient struct {
 	dyn        *dynamic.DynamicClient
 	mapper     *restmapper.DeferredDiscoveryRESTMapper
 	controller controllerclient.Client
+	config     *rest.Config
+	restClient *restclient.RESTClient
 }
 
-func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
-	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
-		&clientcmd.ClientConfigLoadingRules{
-			ExplicitPath: configPath,
-		},
+func GetFlattenedConfig(path string, name string) (*cmdapi.Config, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if len(path) > 0 {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: path}
+	}
+
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
 		&clientcmd.ConfigOverrides{
 			CurrentContext: name,
 		},
-	).ClientConfig()
+	)
+
+	configRaw, err := loader.RawConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load: %w", err)
+	}
+
+	if err := cmdapi.MinifyConfig(&configRaw); err != nil {
+		return nil, fmt.Errorf("failed to minify: %w", err)
+	}
+
+	if err := cmdapi.FlattenConfig(&configRaw); err != nil {
+		return nil, fmt.Errorf("failed to flatten: %w", err)
+	}
+
+	return &configRaw, nil
+}
+
+func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if len(configPath) > 0 {
+		loadingRules = &clientcmd.ClientConfigLoadingRules{ExplicitPath: configPath}
+	}
+
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{
+			CurrentContext: name,
+		},
+	)
+
+	config, err := loader.ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
+	return NewK8sClientFromConfig(config)
+}
+
+func NewK8sClientFromConfig(config *rest.Config) (*K8sClient, error) {
 	if err := sourcev1b2.AddToScheme(clientsetscheme.Scheme); err != nil {
 		return nil, fmt.Errorf("failed to load scheme: %w", err)
 	}
@@ -88,8 +128,6 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 		return nil, fmt.Errorf("failed to create: %w", err)
 	}
 
-	//clientset.CoreV1().Pods(.)
-
 	dyn, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create: %w", err)
@@ -97,11 +135,22 @@ func NewK8sClientForCtx(configPath string, name string) (*K8sClient, error) {
 
 	mapper := restmapper.NewDeferredDiscoveryRESTMapper(memory.NewMemCacheClient(clientset.Discovery()))
 
+	if err := setKubernetesDefaults(config); err != nil {
+		return nil, fmt.Errorf("failed to setKubernetesDefaults: %w", err)
+	}
+
+	restClient, err := restclient.RESTClientFor(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create rest client: %w", err)
+	}
+
 	return &K8sClient{
 		clientset:  clientset,
 		dyn:        dyn,
 		mapper:     mapper,
 		controller: controller,
+		config:     config,
+		restClient: restClient,
 	}, nil
 }
 
@@ -417,6 +466,97 @@ func (c *K8sClient) waitNamespaceReadyRS(ctx context.Context, name string, cb fu
 		case <-ctx.Done():
 		}
 	}
+}
+
+func (c *K8sClient) ClientSet() *kubernetes.Clientset {
+	return c.clientset
+}
+
+func setKubernetesDefaults(config *rest.Config) error {
+	config.GroupVersion = &schema.GroupVersion{Group: "", Version: "v1"}
+
+	if config.APIPath == "" {
+		config.APIPath = "/api"
+	}
+
+	if config.NegotiatedSerializer == nil {
+		// This codec factory ensures the resources are not converted. Therefore, resources
+		// will not be round-tripped through internal versions. Defaulting does not happen
+		// on the client.
+		var Codecs = serializer.NewCodecFactory(runtime.NewScheme())
+
+		config.NegotiatedSerializer = Codecs.WithoutConversion()
+	}
+
+	return rest.SetKubernetesDefaults(config)
+}
+
+func (c *K8sClient) PortForward(namespace string, pod string, port int) (net.Conn, error) {
+	url := c.restClient.Post().
+		Resource("pods").
+		Namespace(namespace).
+		Name(pod).
+		SubResource("portforward").URL()
+
+	transport, upgrader, err := spdy.RoundTripperFor(c.config)
+	if err != nil {
+		return nil, err
+	}
+
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, url)
+
+	tunnelingDialer, err := portforward.NewSPDYOverWebsocketDialer(url, c.config)
+	if err != nil {
+		return nil, err
+	}
+
+	// First attempt tunneling (websocket) dialer, then fallback to spdy dialer.
+	dialer = portforward.NewFallbackDialer(tunnelingDialer, dialer, func(err error) bool {
+		return httpstream.IsUpgradeFailure(err) || httpstream.IsHTTPSProxyError(err)
+	})
+
+	streamConn, protocol, err := dialer.Dial(portforward.PortForwardProtocolV1Name)
+	if err != nil {
+		return nil, fmt.Errorf("error upgrading connection: %s", err)
+	}
+
+	if protocol != portforward.PortForwardProtocolV1Name {
+		return nil, fmt.Errorf("unable to negotiate protocol: server returned %q", protocol)
+	}
+
+	// create error stream
+	headers := http.Header{}
+	headers.Set(corev1.StreamType, corev1.StreamTypeError)
+	headers.Set(corev1.PortHeader, fmt.Sprintf("%d", port))
+	headers.Set(corev1.PortForwardRequestIDHeader, "0")
+	errorStream, err := streamConn.CreateStream(headers)
+	if err != nil {
+		return nil, err
+	}
+
+	// we're not writing to this stream
+	_ = errorStream.Close()
+
+	// create data stream
+	headers.Set(corev1.StreamType, corev1.StreamTypeData)
+
+	dataStream, err := streamConn.CreateStream(headers)
+	if err != nil {
+		return nil, fmt.Errorf("error creating data stream: %w", err)
+	}
+
+	rwConn := rwconn.NewConn(dataStream, dataStream, rwconn.SetCloseHook(func() {
+		_ = streamConn.Close()
+	}))
+
+	go func() {
+		_, _ = io.ReadAll(errorStream)
+
+		_ = rwConn.Close()
+		_ = streamConn.Close()
+	}()
+
+	return rwConn, nil
 }
 
 func ptr[T any](v T) *T {

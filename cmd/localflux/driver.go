@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/deployment"
+	"github.com/csnewman/localflux/internal/relay"
 	"golang.org/x/sync/errgroup"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 type driverCallbacks interface {
 	cluster.Callbacks
 	deployment.Callbacks
+	relay.Callbacks
 }
 
 var (

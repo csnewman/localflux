@@ -182,7 +182,7 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 		}
 	}
 
-	kc, err := cluster.NewK8sClientForCtx(cluster.DefaultKubeConfigPath(), provider.ContextName())
+	kc, err := cluster.NewK8sClientForCtx(provider.KubeConfig(), provider.ContextName())
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client: %w", err)
 	}
@@ -207,7 +207,7 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 		}
 
 		if step.Kustomize != nil {
-			if err := m.deployKustomize(ctx, deployment, step, cb, regTrans, regAuth, provider, replacementImages); err != nil {
+			if err := m.deployKustomize(ctx, deployment, step, cb, regTrans, regAuth, provider, replacementImages, kc); err != nil {
 				return fmt.Errorf("step %q failed: %w", step.Name, err)
 			}
 		}
@@ -241,6 +241,7 @@ func (m *Manager) deployKustomize(
 	regAuth authn.Authenticator,
 	provider cluster.Provider,
 	replacementImages []kustomize.Image,
+	kc *cluster.K8sClient,
 ) error {
 	start := time.Now()
 
@@ -275,11 +276,6 @@ func (m *Manager) deployKustomize(
 	m.logger.Info("Deploying")
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying namespace", start)
-
-	kc, err := cluster.NewK8sClientForCtx(cluster.DefaultKubeConfigPath(), provider.ContextName())
-	if err != nil {
-		return fmt.Errorf("failed to create k8s client: %w", err)
-	}
 
 	parsedDigest, err := conname.NewDigest(pushedTag)
 	if err != nil {

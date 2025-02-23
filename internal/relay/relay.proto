@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+option go_package = "github.com/csnewman/localflux/internal/relay";
+
+package relay;
+
+service Relay {
+  rpc Relay(stream RelayRequest) returns (stream RelayResponse);
+}
+
+message RelayRequest {
+  oneof message {
+    RelayRequestStart start = 1;
+    RelayData data = 2;
+    RelayClose close = 3;
+  }
+}
+
+message RelayResponse {
+  oneof message {
+    RelayData data = 1;
+    RelayClose close = 2;
+  }
+}
+
+enum RelayNetwork {
+  TCP = 0;
+  UDP = 1;
+}
+
+message RelayRequestStart {
+  RelayNetwork network = 1;
+  string address = 2;
+}
+
+message RelayData {
+  bytes data = 1;
+}
+
+enum RelayClose {
+  CLOSE_FULL = 0;
+  CLOSE_READ = 1;
+  CLOSE_WRITE = 2;
+}

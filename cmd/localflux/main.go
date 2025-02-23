@@ -48,6 +48,8 @@ See https://github.com/csnewman/localflux
 
 	rootCmd.AddCommand(createClusterCmd())
 	rootCmd.AddCommand(createDeployCmd())
+	rootCmd.AddCommand(createRelayCmd())
+	rootCmd.AddCommand(createRelayServerCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

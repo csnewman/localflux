@@ -63,6 +63,8 @@ type Cluster struct {
 	Minikube *Minikube `json:"minikube"`
 	// +optional
 	BuildKit *BuildKit `json:"buildkit"`
+	// +optional
+	KubeConfig string `json:"kubeConfig"`
 }
 
 type Minikube struct {

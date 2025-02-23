@@ -77,6 +77,8 @@ type Provider interface {
 
 	ContextName() string
 
+	KubeConfig() string
+
 	BuildKitConfig() config.BuildKit
 
 	Registry() string
@@ -197,7 +199,7 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 
 	cb.Completed("Cluster configured", time.Since(start))
 
-	kc, err := NewK8sClientForCtx(DefaultKubeConfigPath(), p.ContextName())
+	kc, err := NewK8sClientForCtx(p.KubeConfig(), p.ContextName())
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client: %w", err)
 	}

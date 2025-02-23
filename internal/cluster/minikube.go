@@ -193,6 +193,10 @@ func (p *MinikubeProvider) ContextName() string {
 	return p.ProfileName()
 }
 
+func (p *MinikubeProvider) KubeConfig() string {
+	return p.cfg.KubeConfig
+}
+
 func (p *MinikubeProvider) BuildKitConfig() config.BuildKit {
 	if p.cfg.BuildKit == nil {
 		return &v1alpha1.BuildKit{}

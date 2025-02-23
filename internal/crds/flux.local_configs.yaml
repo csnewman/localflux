@@ -41,6 +41,8 @@ spec:
                         type: string
                       type: array
                   type: object
+                kubeConfig:
+                  type: string
                 minikube:
                   properties:
                     addons:
