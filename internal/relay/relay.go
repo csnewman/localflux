@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/netip"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -29,7 +28,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubectl/pkg/polymorphichelpers"
 	ctlscheme "k8s.io/kubectl/pkg/scheme"
-	"k8s.io/kubectl/pkg/util/podutils"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -297,10 +295,6 @@ func (c *Client) runForward(ctx context.Context, forward *v1alpha1.PortForward, 
 	default:
 		return fmt.Errorf("unsupported network: %s", forward.Network)
 	}
-}
-
-func sortByStatus(pods []*corev1.Pod) sort.Interface {
-	return sort.Reverse(podutils.ActivePods(pods))
 }
 
 type Status struct {
