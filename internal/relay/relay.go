@@ -62,6 +62,8 @@ func NewClient(logger *slog.Logger) *Client {
 }
 
 func (c *Client) Run(ctx context.Context, name string, b64 string, cb Callbacks) error {
+	cb.State("Relaying", "Configuring", time.Now())
+
 	cb.Info(fmt.Sprintf("Relaying to %q", name))
 
 	var loader clientcmd.ClientConfig
@@ -149,6 +151,8 @@ func (c *Client) Run(ctx context.Context, name string, b64 string, cb Callbacks)
 	}
 
 	c.relayClient = NewRelayClient(relayConn)
+
+	cb.State("Relaying", "", time.Now())
 
 	if err := c.reconcile(ctx, cb); err != nil {
 		return fmt.Errorf("reconciliation failed: %w", err)
