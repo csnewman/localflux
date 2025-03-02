@@ -10,6 +10,7 @@ import (
 	"github.com/csnewman/localflux/internal/deployment"
 	"github.com/csnewman/localflux/internal/relay"
 	"golang.org/x/sync/errgroup"
+	"slices"
 	"strings"
 	"time"
 )
@@ -83,6 +84,7 @@ type model struct {
 	width      int
 	buildGraph *deployment.BuildGraph
 	exitFunc   func()
+	stepLines  []string
 }
 
 func newModel(exitFunc func()) model {
@@ -126,6 +128,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.state = msg
 		return m, nil
+	case stepLines:
+		m.stepLines = msg.Lines
+		return m, nil
 	case *deployment.BuildGraph:
 		m.buildGraph = msg
 		return m, nil
@@ -149,6 +154,14 @@ func (m model) View() string {
 
 	if m.state.detail != "" {
 		s += "\n" + detailStyle.Width(m.width).Render(m.state.detail)
+	}
+
+	if len(m.stepLines) > 0 {
+		s += "\n" + detailStyle.Width(m.width).Render("----")
+
+		for _, l := range m.stepLines {
+			s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("> %s", l))
+		}
 	}
 
 	if m.buildGraph != nil {
@@ -215,8 +228,16 @@ type stateData struct {
 	exitErr error
 }
 
+type stepLines struct {
+	Lines []string
+}
+
 type uiCallbacks struct {
 	p *tea.Program
+}
+
+func (c *uiCallbacks) StepLines(lines []string) {
+	c.p.Send(stepLines{Lines: slices.Clone(lines)})
 }
 
 func (c *uiCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) {
@@ -255,6 +276,7 @@ type plainCallbacks struct {
 	lastMsg    string
 	lastDetail string
 	lastGraph  time.Time
+	lastLines  []string
 }
 
 func (c *plainCallbacks) State(msg string, detail string, start time.Time) {
@@ -329,4 +351,23 @@ func (c *plainCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) 
 			fmt.Println("  !", string(warning.Short))
 		}
 	}
+}
+
+func (c *plainCallbacks) StepLines(lines []string) {
+	matches := true
+
+	for i, line := range lines {
+
+		if i >= len(c.lastLines) {
+			matches = false
+		} else if c.lastLines[i] != line {
+			matches = false
+		}
+
+		if !matches {
+			fmt.Println("progress:", line)
+		}
+	}
+
+	c.lastLines = slices.Clone(lines)
 }

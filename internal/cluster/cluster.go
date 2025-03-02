@@ -117,6 +117,8 @@ type Callbacks interface {
 	Warn(msg string)
 
 	Error(msg string)
+
+	StepLines(lines []string)
 }
 
 func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
@@ -240,11 +242,21 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 		return fmt.Errorf("failed to apply crds: %w", err)
 	}
 
+	cb.Completed("Manifests configured", time.Since(start))
+
 	relayConfig := p.RelayConfig()
 	if relayConfig.Enabled {
+		start = time.Now()
+
+		m.logger.Info("Deploying relay")
+
+		cb.State("Deploying relay", "Applying manifests", start)
+
 		if err := kc.Apply(ctx, relayManifests); err != nil {
 			return fmt.Errorf("failed to apply relay manifests: %w", err)
 		}
+
+		cb.State("Deploying relay", "Creating local container", start)
 
 		rcfg, err := p.RelayK8Config(ctx)
 		if err != nil {
@@ -254,9 +266,9 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 		if err := startRelay(ctx, m.logger, rcfg, cb); err != nil {
 			return fmt.Errorf("failed to start relay: %w", err)
 		}
-	}
 
-	cb.Completed("Manifests configured", time.Since(start))
+		cb.Completed("Relay configured", time.Since(start))
+	}
 
 	start = time.Now()
 

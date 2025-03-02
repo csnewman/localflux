@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"strings"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/tools/clientcmd"
@@ -49,7 +50,7 @@ spec:
       containers:
       - name: localflux
         image: ghcr.io/csnewman/localflux:master
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         args:
         - "relay-server"
         - "--debug"
@@ -60,11 +61,6 @@ func startRelay(ctx context.Context, logger *slog.Logger, rcfg *cmdapi.Config, c
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "localflux-relay").Run()
 
 	eg, ctx := errgroup.WithContext(ctx)
-
-	//data, err := json.Marshal(rcfg)
-	//if err != nil {
-	//	return fmt.Errorf("failed to marshal relay config: %w", err)
-	//}
 
 	data, err := clientcmd.Write(*rcfg)
 	if err != nil {
@@ -80,6 +76,7 @@ func startRelay(ctx context.Context, logger *slog.Logger, rcfg *cmdapi.Config, c
 		"-d",
 		"--network", "host",
 		"--name", "localflux-relay",
+		"--pull", "always",
 		"ghcr.io/csnewman/localflux:master",
 		"relay",
 		"--debug",
@@ -106,11 +103,21 @@ func startRelay(ctx context.Context, logger *slog.Logger, rcfg *cmdapi.Config, c
 		return nil
 	})
 
+	var stdLines []string
+
 	eg.Go(func() error {
 		s := bufio.NewScanner(or)
 
 		for s.Scan() {
-			cb.Info(fmt.Sprintf("info: %s", s.Text()))
+			txt := s.Text()
+
+			if strings.TrimSpace(txt) == "" {
+				continue
+			}
+
+			logger.Debug("Docker stdout", "line", txt)
+
+			stdLines = append(stdLines, txt)
 		}
 
 		return nil
@@ -119,13 +126,28 @@ func startRelay(ctx context.Context, logger *slog.Logger, rcfg *cmdapi.Config, c
 	eg.Go(func() error {
 		s := bufio.NewScanner(er)
 
+		var lines []string
+
 		for s.Scan() {
-			cb.Info(fmt.Sprintf("err: %s", s.Text()))
-			//logger.Info("relay", "msg", s.Text())
+			lines = append(lines, s.Text())
+
+			cb.StepLines(lines)
+
+			logger.Debug("Docker stderr", "line", s.Text())
 		}
 
 		return nil
 	})
 
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	cb.StepLines(nil)
+
+	if len(stdLines) == 1 {
+		cb.Info(fmt.Sprintf("Created relay container: %q", stdLines[0]))
+	}
+
+	return nil
 }
