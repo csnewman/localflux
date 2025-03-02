@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -22,6 +23,7 @@ import (
 	"github.com/csnewman/localflux/internal/config/v1alpha1"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"golang.org/x/sync/errgroup"
+	cmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 var (
@@ -203,6 +205,46 @@ func (p *MinikubeProvider) BuildKitConfig() config.BuildKit {
 	}
 
 	return p.cfg.BuildKit
+}
+
+func (p *MinikubeProvider) RelayConfig() config.Relay {
+	if p.cfg.Relay == nil {
+		return &v1alpha1.Relay{}
+	}
+
+	return p.cfg.Relay
+}
+
+func (p *MinikubeProvider) RelayK8Config(ctx context.Context) (*cmdapi.Config, error) {
+	ip, err := p.c.IP(ctx, p.ProfileName())
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ip: %w", err)
+	}
+
+	cfg, err := GetFlattenedConfig(
+		p.KubeConfig(),
+		p.ProfileName(),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(cfg.Clusters) != 1 {
+		return nil, fmt.Errorf("expected 1 cluster, found %d", len(cfg.Clusters))
+	}
+
+	for _, cluster := range cfg.Clusters {
+		u, err := url.Parse(cluster.Server)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse cluster server URL: %w", err)
+		}
+
+		u.Host = ip.String()
+
+		break
+	}
+
+	return cfg, nil
 }
 
 func (p *MinikubeProvider) Registry() string {

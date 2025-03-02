@@ -49,8 +49,6 @@ spec:
                       items:
                         type: string
                       type: array
-                    portForward:
-                      type: boolean
                     profile:
                       type: string
                     registryAliases:
@@ -63,6 +61,13 @@ spec:
                   maxLength: 63
                   minLength: 1
                   type: string
+                relay:
+                  properties:
+                    enabled:
+                      type: boolean
+                  required:
+                  - enabled
+                  type: object
               required:
               - name
               type: object

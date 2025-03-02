@@ -65,13 +65,13 @@ type Cluster struct {
 	BuildKit *BuildKit `json:"buildkit"`
 	// +optional
 	KubeConfig string `json:"kubeConfig"`
+	// +optional
+	Relay *Relay `json:"relay"`
 }
 
 type Minikube struct {
 	// +optional
 	Profile string `json:"profile"`
-	// +optional
-	PortForward bool `json:"portForward"`
 	// +optional
 	RegistryAliases []string `json:"registryAliases"`
 	// +optional
@@ -85,6 +85,10 @@ type BuildKit struct {
 	RegistryAuthTLSContext []string `json:"registryAuthTLSContext"`
 	// +optional
 	DockerConfig string `json:"dockerConfig"`
+}
+
+type Relay struct {
+	Enabled bool `json:"enabled"`
 }
 
 type Deployment struct {

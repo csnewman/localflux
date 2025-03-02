@@ -14,6 +14,7 @@ type (
 	Config     = *v1alpha1.Config
 	Cluster    = *v1alpha1.Cluster
 	BuildKit   = *v1alpha1.BuildKit
+	Relay      = *v1alpha1.Relay
 	Image      = *v1alpha1.Image
 	Deployment = *v1alpha1.Deployment
 	Step       = *v1alpha1.Step

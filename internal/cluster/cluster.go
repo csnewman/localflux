@@ -12,6 +12,7 @@ import (
 	"github.com/csnewman/localflux/internal/config"
 	"github.com/csnewman/localflux/internal/crds"
 	"github.com/google/go-containerregistry/pkg/authn"
+	cmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 var (
@@ -80,6 +81,10 @@ type Provider interface {
 	KubeConfig() string
 
 	BuildKitConfig() config.BuildKit
+
+	RelayConfig() config.Relay
+
+	RelayK8Config(ctx context.Context) (*cmdapi.Config, error)
 
 	Registry() string
 
@@ -232,7 +237,23 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 	cb.State("Configuring localflux", "Applying", start)
 
 	if err := kc.Apply(ctx, crds.All); err != nil {
-		return fmt.Errorf("failed to apply flux manifests: %w", err)
+		return fmt.Errorf("failed to apply crds: %w", err)
+	}
+
+	relayConfig := p.RelayConfig()
+	if relayConfig.Enabled {
+		if err := kc.Apply(ctx, relayManifests); err != nil {
+			return fmt.Errorf("failed to apply relay manifests: %w", err)
+		}
+
+		rcfg, err := p.RelayK8Config(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to get relay k8 config: %w", err)
+		}
+
+		if err := startRelay(ctx, m.logger, rcfg, cb); err != nil {
+			return fmt.Errorf("failed to start relay: %w", err)
+		}
 	}
 
 	cb.Completed("Manifests configured", time.Since(start))

@@ -117,7 +117,7 @@ func (c *Client) Run(ctx context.Context, name string, b64 string, cb Callbacks)
 			c.logger.Info("Finding relay pod")
 
 			podList, err := c.client.ClientSet().CoreV1().Pods(cluster.LFNamespace).List(ctx, metav1.ListOptions{
-				LabelSelector: "deployment=relay",
+				LabelSelector: "app.kubernetes.io/component=relay",
 			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to list pods: %w", err)
