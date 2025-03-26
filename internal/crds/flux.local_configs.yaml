@@ -49,6 +49,10 @@ spec:
                       items:
                         type: string
                       type: array
+                    customArgs:
+                      items:
+                        type: string
+                      type: array
                     profile:
                       type: string
                     registryAliases:

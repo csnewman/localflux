@@ -76,6 +76,8 @@ type Minikube struct {
 	RegistryAliases []string `json:"registryAliases"`
 	// +optional
 	Addons []string `json:"addons"`
+	// +optional
+	CustomArgs []string `json:"customArgs"`
 }
 
 type BuildKit struct {

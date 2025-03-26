@@ -91,7 +91,7 @@ func (p *MinikubeProvider) Create(ctx context.Context, cb ProviderCallbacks) err
 		return ErrAlreadyExists
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName(), cb); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
@@ -108,7 +108,7 @@ func (p *MinikubeProvider) Start(ctx context.Context, cb ProviderCallbacks) erro
 		return fmt.Errorf("%w: %v", ErrInvalidState, status)
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName(), cb); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
@@ -290,7 +290,7 @@ func NewMinikube(logger *slog.Logger) *Minikube {
 	}
 }
 
-func (m *Minikube) Start(ctx context.Context, profile string, cb ProviderCallbacks) error {
+func (m *Minikube) Start(ctx context.Context, profile string, extraArgs []string, cb ProviderCallbacks) error {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
 	c := exec.CommandContext(ctx, "minikube")
@@ -305,6 +305,7 @@ func (m *Minikube) Start(ctx context.Context, profile string, cb ProviderCallbac
 	c.Args = append(c.Args, "--driver", "docker")
 	c.Args = append(c.Args, "--cpus", "no-limit")
 	c.Args = append(c.Args, "--memory", "no-limit")
+	c.Args = append(c.Args, extraArgs...)
 
 	pr, pw := io.Pipe()
 	c.Stdout = pw
