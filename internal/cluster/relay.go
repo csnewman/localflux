@@ -16,14 +16,6 @@ import (
 )
 
 const relayManifests = `
-apiVersion: v1
-kind: Namespace
-metadata:
-  labels:
-    app.kubernetes.io/instance: localflux
-    app.kubernetes.io/part-of: localflux
-  name: localflux
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

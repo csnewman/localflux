@@ -15,6 +15,16 @@ import (
 	cmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
+const baseManifests = `
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    app.kubernetes.io/instance: localflux
+    app.kubernetes.io/part-of: localflux
+  name: localflux
+`
+
 var (
 	ErrNoDefault     = errors.New("no default cluster set")
 	ErrNotDefined    = errors.New("cluster not defined in config")
@@ -236,10 +246,16 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 
 	m.logger.Info("Applying localflux manifests")
 
-	cb.State("Configuring localflux", "Applying", start)
+	cb.State("Configuring localflux", "Applying CRDs", start)
 
 	if err := kc.Apply(ctx, crds.All); err != nil {
 		return fmt.Errorf("failed to apply crds: %w", err)
+	}
+
+	cb.State("Configuring localflux", "Applying manifests", start)
+
+	if err := kc.Apply(ctx, baseManifests); err != nil {
+		return fmt.Errorf("failed to apply base manifests: %w", err)
 	}
 
 	cb.Completed("Manifests configured", time.Since(start))
