@@ -66,12 +66,16 @@ type Callbacks interface {
 
 	Error(msg string)
 
-	BuildStatus(name string, graph *BuildGraph)
+	BuildStatus(name string, graph *SolveStatus)
 }
 
 func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, cb Callbacks) error {
 	if clusterName == "" {
 		clusterName = m.cfg.DefaultCluster
+	}
+
+	if name == "" {
+		return fmt.Errorf("%w: a deployment name must be passed", ErrInvalid)
 	}
 
 	provider, err := m.clusters.Provider(clusterName)
@@ -365,8 +369,8 @@ func (m *Manager) buildImages(
 
 			cb.State("Building images", image.Image, start)
 
-			artifact, err := b.Build(ctx, image, "./", func(bg *BuildGraph) {
-				cb.BuildStatus(image.Image, bg)
+			artifact, err := b.Build(ctx, image, "./", func(res *SolveStatus) {
+				cb.BuildStatus(image.Image, res)
 			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to build image: %w", err)

@@ -5,7 +5,7 @@ go 1.24
 require (
 	github.com/aojea/rwconn v0.1.1
 	github.com/charmbracelet/bubbles/v2 v2.0.0-alpha.2.0.20250211170751-4491afa808c7
-	github.com/charmbracelet/bubbletea/v2 v2.0.0-alpha.2.0.20250221141250-ac139a6889f1
+	github.com/charmbracelet/bubbletea/v2 v2.0.0-beta1
 	github.com/charmbracelet/lipgloss/v2 v2.0.0-alpha.2.0.20250218201041-aa91bd691cf5
 	github.com/cloudevents/sdk-go/v2 v2.15.2
 	github.com/docker/cli v27.5.0+incompatible
@@ -21,7 +21,9 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/spf13/cobra v1.8.1
 	github.com/tonistiigi/fsutil v0.0.0-20250113203817-b14e27f4135a
-	golang.org/x/sync v0.11.0
+	github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea
+	github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab
+	golang.org/x/sync v0.12.0
 	google.golang.org/grpc v1.68.1
 	google.golang.org/protobuf v1.36.3
 	k8s.io/api v0.32.1
@@ -29,6 +31,7 @@ require (
 	k8s.io/apimachinery v0.32.1
 	k8s.io/cli-runtime v0.32.0
 	k8s.io/client-go v0.32.1
+	k8s.io/klog/v2 v2.130.1
 	k8s.io/kubectl v0.32.0
 	sigs.k8s.io/controller-runtime v0.20.1
 	sigs.k8s.io/yaml v1.4.0
@@ -60,10 +63,10 @@ require (
 	github.com/aws/smithy-go v1.22.2 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/chai2010/gettext-go v1.0.2 // indirect
-	github.com/charmbracelet/colorprofile v0.2.0 // indirect
+	github.com/charmbracelet/colorprofile v0.2.3-0.20250311203215-f60798e515dc // indirect
 	github.com/charmbracelet/x/ansi v0.8.0 // indirect
-	github.com/charmbracelet/x/cellbuf v0.0.12-0.20250212155406-f75055277088 // indirect
-	github.com/charmbracelet/x/input v0.3.3 // indirect
+	github.com/charmbracelet/x/cellbuf v0.0.13 // indirect
+	github.com/charmbracelet/x/input v0.3.4 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.0 // indirect
 	github.com/containerd/console v1.0.4 // indirect
@@ -162,8 +165,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/tonistiigi/go-csvvalue v0.0.0-20240710180619-ddb21b71c0b4 // indirect
-	github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea // indirect
-	github.com/tonistiigi/vt100 v0.0.0-20240514184818-90bafcd6abab // indirect
 	github.com/vbatts/tar-split v0.11.6 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xeipuuv/gojsonpointer v0.0.0-20190905194746-02993c407bfb // indirect
@@ -189,7 +190,7 @@ require (
 	golang.org/x/oauth2 v0.25.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect
 	golang.org/x/term v0.28.0 // indirect
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/text v0.23.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	golang.org/x/tools v0.29.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20241209162323-e6fa225c2576 // indirect
@@ -202,7 +203,6 @@ require (
 	gotest.tools/v3 v3.5.2 // indirect
 	helm.sh/helm/v3 v3.17.0 // indirect
 	k8s.io/component-base v0.32.1 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20241105132330-32ad38e42d3f // indirect
 	k8s.io/utils v0.0.0-20241104163129-6fe5fd82f078 // indirect
 	sigs.k8s.io/controller-tools v0.17.2 // indirect

@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"github.com/charmbracelet/bubbles/v2/spinner"
+	"github.com/charmbracelet/bubbles/v2/viewport"
 	tea "github.com/charmbracelet/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss/v2"
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/deployment"
+	"github.com/csnewman/localflux/internal/progress"
 	"github.com/csnewman/localflux/internal/relay"
 	"golang.org/x/sync/errgroup"
+	"os"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -22,13 +24,14 @@ type driverCallbacks interface {
 }
 
 var (
-	spinnerStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
-	detailStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Margin(0, 2)
-	durationStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	infoMark      = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).SetString("ℹ")
-	checkMark     = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).SetString("✓")
-	warnMark      = lipgloss.NewStyle().Foreground(lipgloss.Color("148")).SetString("⚠")
-	errorMark     = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).SetString("⚠")
+	spinnerStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("63"))
+	detailStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Margin(0, 2)
+	errorDetailStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Margin(0, 2)
+	durationStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	infoMark         = lipgloss.NewStyle().Foreground(lipgloss.Color("250")).SetString("ℹ")
+	checkMark        = lipgloss.NewStyle().Foreground(lipgloss.Color("42")).SetString("✓")
+	warnMark         = lipgloss.NewStyle().Foreground(lipgloss.Color("148")).SetString("⚠")
+	errorMark        = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).SetString("⚠")
 )
 
 func drive(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
@@ -40,7 +43,10 @@ func drive(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks)
 }
 
 func drivePlain(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
-	return fn(ctx, &plainCallbacks{})
+	driver := &plainCallbacks{}
+	err := fn(ctx, driver)
+	driver.exiting(err)
+	return err
 }
 
 func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallbacks) error) error {
@@ -78,18 +84,23 @@ func driveUI(ctx context.Context, fn func(ctx context.Context, cb driverCallback
 }
 
 type model struct {
-	spinner    spinner.Model
-	cleanExit  bool
-	state      *stateData
-	width      int
-	buildGraph *deployment.BuildGraph
-	exitFunc   func()
-	stepLines  []string
+	spinner   spinner.Model
+	cleanExit bool
+	dirtyExit bool
+	state     *stateData
+	width     int
+	height    int
+	exitFunc  func()
+	stepLines []string
+	vp        viewport.Model
+
+	trace *progress.Trace
 }
 
 func newModel(exitFunc func()) model {
 	s := spinner.New()
 	s.Style = spinnerStyle
+
 	return model{
 		spinner: s,
 		state: &stateData{
@@ -109,6 +120,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
+
 		return m, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
@@ -121,6 +134,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.exit {
 			if msg.exitErr == nil {
 				m.cleanExit = true
+			} else {
+				m.dirtyExit = true
 			}
 
 			return m, tea.Quit
@@ -131,9 +146,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stepLines:
 		m.stepLines = msg.Lines
 		return m, nil
-	case *deployment.BuildGraph:
-		m.buildGraph = msg
+	case *deployment.SolveStatus:
+		if msg == nil {
+			m.trace = nil
+
+			return m, nil
+		}
+
+		if m.trace == nil {
+			m.trace = progress.NewTrace(true)
+		}
+
+		m.trace.Update(msg, m.width-5)
 		return m, nil
+
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spinner, cmd = m.spinner.Update(msg)
@@ -164,60 +190,92 @@ func (m model) View() string {
 		}
 	}
 
-	if m.buildGraph != nil {
-		m.buildGraph.Mu.Lock()
-		defer m.buildGraph.Mu.Unlock()
+	if m.trace != nil {
+		d := m.trace.DisplayInfo()
 
-		s += "\n" + detailStyle.Width(m.width).Render("----")
+		d.Jobs = progress.SetupTerminals(d.Jobs, m.height-5, true)
 
-		for _, id := range m.buildGraph.NodeOrder {
-			n := m.buildGraph.Nodes[id]
+		s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf(
+			"[+] Building %.1fs (%d/%d)",
+			time.Since(d.StartTime).Seconds(),
+			d.CountCompleted,
+			d.CountTotal,
+		))
 
-			completed := time.Now()
-
-			if n.Completed != nil {
-				completed = *n.Completed
+		for _, j := range d.Jobs {
+			if len(j.Intervals) == 0 {
+				continue
 			}
-
-			dur := completed.Sub(*n.Started).Round(time.Second)
-
-			s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("%s %s %s", n.Name, dur.String(), n.Error))
-
-			for _, sid := range n.StatusOrder {
-				st := n.Statuses[sid]
-
-				completed := time.Now()
-
-				if st.Completed != nil {
-					completed = *st.Completed
-				}
-
-				dur := completed.Sub(*st.Started).Round(time.Second)
-
-				var v string
-
-				if st.Current != 0 || st.Total != 0 {
-					v = fmt.Sprintf("[%d/%d]", st.Current, st.Total)
-				}
-
-				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("| %s %s %s", sid, dur.String(), v))
+			var dt float64
+			for _, ival := range j.Intervals {
+				dt += ival.Duration().Seconds()
 			}
+			if dt < 0.05 {
+				dt = 0
+			}
+			pfx := " => "
+			timer := fmt.Sprintf(" %3.1fs", dt)
+			status := j.Status
+			showStatus := false
 
-			if len(n.Logs) > 0 {
-				for l := range strings.Lines(string(n.Logs)) {
-					s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("> %s", l))
+			left := m.width - len(pfx) - len(timer) - 1
+			if status != "" {
+				if left+len(status) > 20 {
+					showStatus = true
+					left -= len(status) + 1
 				}
 			}
-
-			for _, warning := range n.Warnings {
-				s += "\n" + detailStyle.Width(m.width).Render(fmt.Sprintf("! %s", string(warning.Short)))
+			if left < 12 { // too small screen to show progress
+				continue
 			}
+			name := j.Name
+			if len(name) > left {
+				name = name[:left]
+			}
+
+			out := pfx + name
+			if showStatus {
+				out += " " + status
+			}
+
+			out = align(out, timer, m.width-4)
+
+			s += "\n" + detailStyle.Width(m.width).Render(out)
+
+			if j.ShowTerm {
+				term := j.Vertex.Term
+				term.Resize(progress.TermHeight, m.width-progress.TermPad)
+				for _, l := range term.Content {
+					if !isEmpty(l) {
+						s += "\n" + detailStyle.Width(m.width).Render(" => => "+string(l))
+					}
+				}
+				j.Vertex.TermCount++
+				j.ShowTerm = false
+			}
+		}
+
+		if m.dirtyExit {
+			s += "\n" + errorDetailStyle.Width(m.width).Render(m.trace.ErrorLogs())
 		}
 	}
 
 	s += "\n"
 
 	return s
+}
+
+func isEmpty(l []rune) bool {
+	for _, r := range l {
+		if r != ' ' {
+			return false
+		}
+	}
+	return true
+}
+
+func align(l, r string, w int) string {
+	return fmt.Sprintf("%-[2]*[1]s %[3]s", l, w-len(r)-1, r)
 }
 
 type stateData struct {
@@ -240,7 +298,7 @@ func (c *uiCallbacks) StepLines(lines []string) {
 	c.p.Send(stepLines{Lines: slices.Clone(lines)})
 }
 
-func (c *uiCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) {
+func (c *uiCallbacks) BuildStatus(name string, graph *deployment.SolveStatus) {
 	c.p.Send(graph)
 }
 
@@ -275,8 +333,10 @@ func (c *uiCallbacks) State(msg string, detail string, start time.Time) {
 type plainCallbacks struct {
 	lastMsg    string
 	lastDetail string
-	lastGraph  time.Time
 	lastLines  []string
+
+	trace *progress.Trace
+	mux   *progress.TextMux
 }
 
 func (c *plainCallbacks) State(msg string, detail string, start time.Time) {
@@ -314,43 +374,28 @@ func (c *plainCallbacks) Completed(msg string, dur time.Duration) {
 	fmt.Println("completed:", msg, dur.Round(time.Second))
 }
 
-func (c *plainCallbacks) BuildStatus(name string, graph *deployment.BuildGraph) {
+func (c *plainCallbacks) exiting(err error) {
+	if err != nil && c.trace != nil {
+		fmt.Println(c.trace.ErrorLogs())
+	}
+}
+
+func (c *plainCallbacks) BuildStatus(name string, graph *deployment.SolveStatus) {
 	if graph == nil {
+		c.trace = nil
+		c.mux = nil
+
 		return
 	}
 
-	graph.Mu.Lock()
-	defer graph.Mu.Unlock()
-
-	if graph.Final {
-		c.lastGraph = time.Time{}
-	} else if time.Since(c.lastGraph) < time.Second*15 {
-		return
-	} else {
-		c.lastGraph = time.Now()
+	if c.trace == nil {
+		c.trace = progress.NewTrace(false)
+		c.mux = progress.NewTextMux(os.Stdout, "Building "+name)
 	}
 
-	fmt.Println("----")
+	c.trace.Update(graph, 80)
 
-	for _, id := range graph.NodeOrder {
-		n := graph.Nodes[id]
-
-		fmt.Println(n.Name, n.Started, n.Completed, n.Error)
-
-		for _, sid := range n.StatusOrder {
-			s := n.Statuses[sid]
-
-			fmt.Println("  |", sid, s.Started, s.Completed, s.Current, s.Total)
-		}
-
-		for _, log := range n.Logs {
-			fmt.Println("  >", string(log))
-		}
-
-		for _, warning := range n.Warnings {
-			fmt.Println("  !", string(warning.Short))
-		}
-	}
+	c.mux.Print(c.trace)
 }
 
 func (c *plainCallbacks) StepLines(lines []string) {

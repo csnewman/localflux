@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"k8s.io/klog/v2"
 	"log"
 	"log/slog"
 	"os"
@@ -37,6 +38,7 @@ See https://github.com/csnewman/localflux
 				log.SetOutput(io.Discard)
 			}
 
+			klog.SetSlogLogger(logger)
 			slog.SetDefault(logger)
 
 			return nil
