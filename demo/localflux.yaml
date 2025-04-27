@@ -5,9 +5,12 @@ clusters:
   - name: minikube
     minikube:
       profile: dev1
-      portForward: true
       registryAliases:
         - example.invalid
+      addons:
+        - ingress
+    relay:
+      enabled: true
 deployments:
   - name: simple
     images:
@@ -26,3 +29,14 @@ deployments:
         kustomize:
           context: deploy
           namespace: demo
+    portForward:
+      - kind: Service
+        namespace: ingress-nginx
+        name: ingress-nginx-controller
+        port: 80
+        localPort: 8080
+      - kind: Deployment
+        namespace: demo
+        name:  the-deployment
+        port: 8080
+        localPort: 8081

@@ -4,3 +4,5 @@ metadata:
   name: demo
 resources:
   - deployment.yaml
+  - service.yaml
+  - ingress.yaml
