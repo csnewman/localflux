@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"os/exec"
 	"slices"
 	"strings"
@@ -60,8 +59,8 @@ func (p *MinikubeProvider) ProfileName() string {
 	return "minikube"
 }
 
-func (p *MinikubeProvider) Status(ctx context.Context) (Status, error) {
-	profiles, err := p.c.Profiles(ctx)
+func (p *MinikubeProvider) Status(ctx context.Context, cb ProviderCallbacks) (Status, error) {
+	profiles, err := p.c.Profiles(ctx, cb)
 	if err != nil {
 		return "", err
 	}
@@ -82,7 +81,7 @@ func (p *MinikubeProvider) Status(ctx context.Context) (Status, error) {
 }
 
 func (p *MinikubeProvider) Create(ctx context.Context, cb ProviderCallbacks) error {
-	status, err := p.Status(ctx)
+	status, err := p.Status(ctx, cb)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
 	}
@@ -99,7 +98,7 @@ func (p *MinikubeProvider) Create(ctx context.Context, cb ProviderCallbacks) err
 }
 
 func (p *MinikubeProvider) Start(ctx context.Context, cb ProviderCallbacks) error {
-	status, err := p.Status(ctx)
+	status, err := p.Status(ctx, cb)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
 	}
@@ -116,7 +115,7 @@ func (p *MinikubeProvider) Start(ctx context.Context, cb ProviderCallbacks) erro
 }
 
 func (p *MinikubeProvider) Reconfigure(ctx context.Context, cb ProviderCallbacks) error {
-	status, err := p.Status(ctx)
+	status, err := p.Status(ctx, cb)
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
 	}
@@ -308,8 +307,9 @@ func (m *Minikube) Start(ctx context.Context, profile string, extraArgs []string
 	c.Args = append(c.Args, extraArgs...)
 
 	pr, pw := io.Pipe()
+	prE, pwE := io.Pipe()
 	c.Stdout = pw
-	c.Stderr = os.Stderr
+	c.Stderr = pwE
 	c.Stdin = nil
 
 	errgrp.Go(func() error {
@@ -319,7 +319,12 @@ func (m *Minikube) Start(ctx context.Context, profile string, extraArgs []string
 	})
 
 	errgrp.Go(func() error {
+		return m.processErrOutput(prE, cb)
+	})
+
+	errgrp.Go(func() error {
 		defer pw.Close()
+		defer pwE.Close()
 
 		return c.Run()
 	})
@@ -341,7 +346,7 @@ type rawProfile struct {
 	Status string `json:"Status"`
 }
 
-func (m *Minikube) Profiles(ctx context.Context) (map[string]MinikubeProfile, error) {
+func (m *Minikube) Profiles(ctx context.Context, cb ProviderCallbacks) (map[string]MinikubeProfile, error) {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
 	c := exec.CommandContext(ctx, "minikube")
@@ -351,8 +356,9 @@ func (m *Minikube) Profiles(ctx context.Context) (map[string]MinikubeProfile, er
 	c.Args = append(c.Args, "--output", "json")
 
 	pr, pw := io.Pipe()
+	prE, pwE := io.Pipe()
 	c.Stdout = pw
-	c.Stderr = os.Stderr
+	c.Stderr = pwE
 	c.Stdin = nil
 
 	profiles := make(map[string]MinikubeProfile)
@@ -382,7 +388,12 @@ func (m *Minikube) Profiles(ctx context.Context) (map[string]MinikubeProfile, er
 	})
 
 	errgrp.Go(func() error {
+		return m.processErrOutput(prE, cb)
+	})
+
+	errgrp.Go(func() error {
 		defer pw.Close()
+		defer pwE.Close()
 
 		return c.Run()
 	})
@@ -414,8 +425,9 @@ func (m *Minikube) Addons(ctx context.Context, profile string) (map[string]bool,
 	c.Args = append(c.Args, "--output", "json")
 
 	pr, pw := io.Pipe()
+	prE, pwE := io.Pipe()
 	c.Stdout = pw
-	c.Stderr = os.Stderr
+	c.Stderr = pwE
 	c.Stdin = nil
 
 	addons := make(map[string]bool)
@@ -445,7 +457,12 @@ func (m *Minikube) Addons(ctx context.Context, profile string) (map[string]bool,
 	})
 
 	errgrp.Go(func() error {
+		return m.processErrOutput(prE, ProviderCallbacks{})
+	})
+
+	errgrp.Go(func() error {
 		defer pw.Close()
+		defer pwE.Close()
 
 		return c.Run()
 	})
@@ -470,9 +487,10 @@ func (m *Minikube) EnableAddon(ctx context.Context, profile string, name string)
 	c.Args = append(c.Args, name)
 
 	buffer := bytes.NewBuffer(nil)
+	bufferErr := bytes.NewBuffer(nil)
 
 	c.Stdout = buffer
-	c.Stderr = os.Stderr
+	c.Stderr = bufferErr
 	c.Stdin = nil
 
 	if err := c.Run(); err != nil {
@@ -485,7 +503,7 @@ func (m *Minikube) EnableAddon(ctx context.Context, profile string, name string)
 		return nil
 	}
 
-	m.logger.Info("Unexpected output", "output", text)
+	m.logger.Info("Unexpected output", "stdout", text, "stderr", bufferErr.String())
 
 	return ErrAddonFailed
 }
@@ -503,9 +521,10 @@ func (m *Minikube) ConfigureRegistryAliases(ctx context.Context, profile string,
 	c.Args = append(c.Args, name)
 
 	buffer := bytes.NewBuffer(nil)
+	bufferErr := bytes.NewBuffer(nil)
 
 	c.Stdout = buffer
-	c.Stderr = os.Stderr
+	c.Stderr = bufferErr
 
 	c.Stdin = strings.NewReader(strings.Join(values, " ") + "\n")
 
@@ -519,7 +538,7 @@ func (m *Minikube) ConfigureRegistryAliases(ctx context.Context, profile string,
 		return nil
 	}
 
-	m.logger.Info("Unexpected output", "output", text)
+	m.logger.Info("Unexpected output", "stdout", text, "stderr", bufferErr.String())
 
 	return ErrAddonFailed
 }
@@ -533,13 +552,14 @@ func (m *Minikube) IP(ctx context.Context, profile string) (net.IP, error) {
 	}
 
 	buffer := bytes.NewBuffer(nil)
+	bufferErr := bytes.NewBuffer(nil)
 
 	c.Stdout = buffer
-	c.Stderr = os.Stderr
+	c.Stderr = bufferErr
 	c.Stdin = nil
 
 	if err := c.Run(); err != nil {
-		m.logger.Info("Unexpected output", "output", buffer.String())
+		m.logger.Info("Unexpected output", "stdout", buffer.String(), "stderr", bufferErr.String())
 
 		return nil, err
 	}
@@ -549,7 +569,7 @@ func (m *Minikube) IP(ctx context.Context, profile string) (net.IP, error) {
 	ip := net.ParseIP(text)
 
 	if ip == nil {
-		m.logger.Info("Unexpected output", "output", buffer.String())
+		m.logger.Info("Unexpected output", "stdout", buffer.String(), "stderr", bufferErr.String())
 
 		return nil, ErrInvalidState
 	}
@@ -631,6 +651,23 @@ func (m *Minikube) processOutput(pr *io.PipeReader, processor func(line string) 
 		default:
 			m.logger.Error("Unknown event type", "event", event.Type())
 		}
+	}
+
+	return nil
+}
+
+func (m *Minikube) processErrOutput(pr *io.PipeReader, cb ProviderCallbacks) error {
+	scanner := bufio.NewScanner(pr)
+	for scanner.Scan() {
+		text := scanner.Text()
+
+		if len(strings.TrimSpace(text)) == 0 {
+			continue
+		}
+
+		m.logger.Warn("Minikube std err output", "output", text)
+
+		cb.NotifyWarning("Minikube stderr: " + text)
 	}
 
 	return nil

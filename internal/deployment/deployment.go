@@ -101,7 +101,13 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 
 	cb.Info(fmt.Sprintf("Deploying %q to %q", deployment.Name, clusterName))
 
-	clusterStatus, err := provider.Status(ctx)
+	clusterStatus, err := provider.Status(ctx, cluster.ProviderCallbacks{
+		Step:    func(detail string) {},
+		Success: cb.Success,
+		Info:    cb.Info,
+		Warn:    cb.Warn,
+		Error:   cb.Error,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to check cluster status: %w", err)
 	}

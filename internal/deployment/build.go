@@ -73,7 +73,11 @@ func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (
 		return nil, fmt.Errorf("failed to parse registry tls auth context: %w", err)
 	}
 
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, tlsConfigs)}
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{
+		ConfigFile:       dockerConfig,
+		TLSConfigs:       tlsConfigs,
+		ExpireCachedAuth: nil,
+	})}
 
 	return &Builder{
 		logger:     logger,

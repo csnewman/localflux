@@ -78,7 +78,7 @@ func (c ProviderCallbacks) NotifyError(s string) {
 }
 
 type Provider interface {
-	Status(ctx context.Context) (Status, error)
+	Status(ctx context.Context, cb ProviderCallbacks) (Status, error)
 
 	Create(ctx context.Context, cb ProviderCallbacks) error
 
@@ -149,7 +149,13 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 		return err
 	}
 
-	status, err := p.Status(ctx)
+	status, err := p.Status(ctx, ProviderCallbacks{
+		Step:    func(detail string) {},
+		Success: cb.Success,
+		Info:    cb.Info,
+		Warn:    cb.Warn,
+		Error:   cb.Error,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to get status: %w", err)
 	}
