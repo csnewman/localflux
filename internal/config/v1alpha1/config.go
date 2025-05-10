@@ -77,6 +77,8 @@ type Minikube struct {
 	// +optional
 	Addons []string `json:"addons"`
 	// +optional
+	CNI string `json:"cni"`
+	// +optional
 	CustomArgs []string `json:"customArgs"`
 }
 
@@ -91,6 +93,10 @@ type BuildKit struct {
 
 type Relay struct {
 	Enabled bool `json:"enabled"`
+	// +optional
+	DisableClient bool `json:"disableClient"`
+	// +optional
+	ClusterNetworking bool `json:"clusterNetworking"`
 }
 
 type Deployment struct {

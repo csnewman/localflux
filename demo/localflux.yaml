@@ -9,6 +9,7 @@ clusters:
         - example.invalid
       addons:
         - ingress
+      cni: calico
     relay:
       enabled: true
 deployments:

@@ -9,13 +9,14 @@ import (
 	"log/slog"
 	"os/exec"
 	"strings"
+	"text/template"
 
 	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/tools/clientcmd"
 	cmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
-const relayManifests = `
+var relayManifests = template.Must(template.New("relay").Parse(`
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -39,6 +40,10 @@ spec:
         app.kubernetes.io/instance: localflux
         app.kubernetes.io/part-of: localflux
     spec:
+{{if .hostNetwork}}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+{{end}}
       containers:
       - name: localflux
         image: ghcr.io/csnewman/localflux:master
@@ -47,7 +52,7 @@ spec:
         - "relay-server"
         - "--debug"
       priorityClassName: system-cluster-critical
-`
+`))
 
 func startRelay(ctx context.Context, logger *slog.Logger, rcfg *cmdapi.Config, cb Callbacks) error {
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", "localflux-relay").Run()

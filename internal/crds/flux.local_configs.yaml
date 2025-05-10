@@ -49,6 +49,8 @@ spec:
                       items:
                         type: string
                       type: array
+                    cni:
+                      type: string
                     customArgs:
                       items:
                         type: string
@@ -67,6 +69,10 @@ spec:
                   type: string
                 relay:
                   properties:
+                    clusterNetworking:
+                      type: boolean
+                    disableClient:
+                      type: boolean
                     enabled:
                       type: boolean
                   required:

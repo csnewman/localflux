@@ -90,7 +90,7 @@ func (p *MinikubeProvider) Create(ctx context.Context, cb ProviderCallbacks) err
 		return ErrAlreadyExists
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, cb); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, p.cfg.Minikube.CNI, cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
@@ -107,7 +107,7 @@ func (p *MinikubeProvider) Start(ctx context.Context, cb ProviderCallbacks) erro
 		return fmt.Errorf("%w: %v", ErrInvalidState, status)
 	}
 
-	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, cb); err != nil {
+	if err := p.c.Start(ctx, p.ProfileName(), p.cfg.Minikube.CustomArgs, p.cfg.Minikube.CNI, cb); err != nil {
 		return fmt.Errorf("failed to start minikube: %w", err)
 	}
 
@@ -250,6 +250,10 @@ func (p *MinikubeProvider) Registry() string {
 	return "registry.minikube"
 }
 
+func (p *MinikubeProvider) CNI() string {
+	return p.cfg.Minikube.CNI
+}
+
 func (p *MinikubeProvider) RegistryConn(ctx context.Context) (http.RoundTripper, authn.Authenticator, error) {
 	ip, err := p.c.IP(ctx, p.ProfileName())
 	if err != nil {
@@ -289,7 +293,13 @@ func NewMinikube(logger *slog.Logger) *Minikube {
 	}
 }
 
-func (m *Minikube) Start(ctx context.Context, profile string, extraArgs []string, cb ProviderCallbacks) error {
+func (m *Minikube) Start(
+	ctx context.Context,
+	profile string,
+	extraArgs []string,
+	cni string,
+	cb ProviderCallbacks,
+) error {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
 	c := exec.CommandContext(ctx, "minikube")
@@ -304,6 +314,11 @@ func (m *Minikube) Start(ctx context.Context, profile string, extraArgs []string
 	c.Args = append(c.Args, "--driver", "docker")
 	c.Args = append(c.Args, "--cpus", "no-limit")
 	c.Args = append(c.Args, "--memory", "no-limit")
+
+	if cni != "" {
+		c.Args = append(c.Args, "--cni", cni)
+	}
+
 	c.Args = append(c.Args, extraArgs...)
 
 	pr, pw := io.Pipe()

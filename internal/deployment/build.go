@@ -32,7 +32,7 @@ func init() {
 				addr = strings.TrimPrefix(addr, "cmd://")
 				parts := strings.Split(addr, "/")
 
-				return commandconn.New(nil, parts[0], parts[1:]...)
+				return commandconn.New(context.Background(), parts[0], parts[1:]...)
 			},
 		}, nil
 	})

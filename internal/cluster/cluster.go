@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -274,19 +275,29 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 
 		cb.State("Deploying relay", "Applying manifests", start)
 
-		if err := kc.Apply(ctx, relayManifests); err != nil {
+		var rendered bytes.Buffer
+
+		if err := relayManifests.Execute(&rendered, map[string]any{
+			"hostNetwork": !relayConfig.ClusterNetworking,
+		}); err != nil {
+			return fmt.Errorf("failed to render relay manifests: %w", err)
+		}
+
+		if err := kc.Apply(ctx, rendered.String()); err != nil {
 			return fmt.Errorf("failed to apply relay manifests: %w", err)
 		}
 
-		cb.State("Deploying relay", "Creating local container", start)
+		if !relayConfig.DisableClient {
+			cb.State("Deploying relay", "Creating local container", start)
 
-		rcfg, err := p.RelayK8Config(ctx)
-		if err != nil {
-			return fmt.Errorf("failed to get relay k8 config: %w", err)
-		}
+			rcfg, err := p.RelayK8Config(ctx)
+			if err != nil {
+				return fmt.Errorf("failed to get relay k8 config: %w", err)
+			}
 
-		if err := startRelay(ctx, m.logger, rcfg, cb); err != nil {
-			return fmt.Errorf("failed to start relay: %w", err)
+			if err := startRelay(ctx, m.logger, rcfg, cb); err != nil {
+				return fmt.Errorf("failed to start relay: %w", err)
+			}
 		}
 
 		cb.Completed("Relay configured", time.Since(start))
