@@ -50,7 +50,7 @@ localflux deploy simple
 ```
 
 <div align="center">
-  <img src=".github/start.gif" />
+  <img src=".github/deploy.gif" />
 </div>
 
 Visit http://localhost:8080/ to see the demo in action!
