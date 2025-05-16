@@ -195,6 +195,11 @@ func (in *Helm) DeepCopyInto(out *Helm) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.Wait != nil {
+		in, out := &in.Wait, &out.Wait
+		*out = new(bool)
+		**out = **in
+	}
 	if in.Patches != nil {
 		in, out := &in.Patches, &out.Patches
 		*out = make([]kustomize.Patch, len(*in))
@@ -253,6 +258,11 @@ func (in *Kustomize) DeepCopyInto(out *Kustomize) {
 		in, out := &in.IgnorePaths, &out.IgnorePaths
 		*out = make([]string, len(*in))
 		copy(*out, *in)
+	}
+	if in.Wait != nil {
+		in, out := &in.Wait, &out.Wait
+		*out = new(bool)
+		**out = **in
 	}
 	if in.Components != nil {
 		in, out := &in.Components, &out.Components

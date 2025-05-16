@@ -144,6 +144,8 @@ type Kustomize struct {
 	// +optional
 	Namespace string `json:"namespace"`
 	// +optional
+	Wait *bool `json:"wait"`
+	// +optional
 	Path string `json:"path"`
 	// +optional
 	Components []string `json:"components"`
@@ -166,6 +168,8 @@ type Helm struct {
 	// +kubebuilder:validation:MaxLength=63
 	// +optional
 	Namespace string `json:"namespace"`
+	// +optional
+	Wait *bool `json:"wait"`
 	// +optional
 	Patches []kustomize.Patch `json:"patches"`
 	// +optional

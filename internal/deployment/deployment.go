@@ -5,32 +5,34 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/csnewman/localflux/internal/deployment/v1alpha1"
-	"github.com/fluxcd/pkg/chartutil"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/config"
+	"github.com/csnewman/localflux/internal/deployment/v1alpha1"
 	helmv2 "github.com/fluxcd/helm-controller/api/v2"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
 	"github.com/fluxcd/pkg/apis/kustomize"
+	"github.com/fluxcd/pkg/apis/meta"
+	"github.com/fluxcd/pkg/chartutil"
 	ociclient "github.com/fluxcd/pkg/oci/client"
 	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/crane"
 	conname "github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/uuid"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 )
 
 var (
@@ -527,6 +529,8 @@ func (m *Manager) deployKustomize(
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying kustomize", start)
 
+	tgt := uuid.New().String()
+
 	if err := kc.PatchSSA(ctx, &kustomizev1.Kustomization{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: kustomizev1.GroupVersion.String(),
@@ -535,6 +539,9 @@ func (m *Manager) deployKustomize(
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      remoteName,
 			Namespace: cluster.LFNamespace,
+			Annotations: map[string]string{
+				meta.ReconcileRequestAnnotation: tgt,
+			},
 		},
 		Spec: kustomizev1.KustomizationSpec{
 			Interval: metav1.Duration{
@@ -559,6 +566,29 @@ func (m *Manager) deployKustomize(
 		},
 	}); err != nil {
 		return fmt.Errorf("failed to create kustomization: %w", err)
+	}
+
+	shouldWait := true
+
+	if step.Kustomize.Wait != nil {
+		shouldWait = *step.Kustomize.Wait
+	}
+
+	if shouldWait {
+		if err := Reconcile[*ReconcileKustomization](
+			ctx,
+			kc,
+			cluster.LFNamespace,
+			remoteName,
+			tgt,
+			time.Second*30,
+			new(ReconcileKustomization),
+			func(s string) {
+				cb.State(fmt.Sprintf("Step %q", step.Name), "Waiting for reconcile: "+s, start)
+			},
+		); err != nil {
+			return fmt.Errorf("failed to reconcile kustomization: %w", err)
+		}
 	}
 
 	cb.Completed(fmt.Sprintf("Deployed step %q", step.Name), time.Since(start))
@@ -743,6 +773,8 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying chart", start)
 
+	tgt := uuid.New().String()
+
 	if err := kc.PatchSSA(ctx, &helmv2.HelmRelease{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       helmv2.HelmReleaseKind,
@@ -751,6 +783,11 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      remoteName,
 			Namespace: cluster.LFNamespace,
+			Annotations: map[string]string{
+				meta.ReconcileRequestAnnotation: tgt,
+				helmv2.ForceRequestAnnotation:   tgt,
+				helmv2.ResetRequestAnnotation:   tgt,
+			},
 		},
 		Spec: helmv2.HelmReleaseSpec{
 			Chart:    chart,
@@ -782,6 +819,29 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 		},
 	}); err != nil {
 		return fmt.Errorf("failed to create kustomization: %w", err)
+	}
+
+	shouldWait := true
+
+	if step.Helm.Wait != nil {
+		shouldWait = *step.Helm.Wait
+	}
+
+	if shouldWait {
+		if err := Reconcile[*ReconcileHelm](
+			ctx,
+			kc,
+			cluster.LFNamespace,
+			remoteName,
+			tgt,
+			time.Second*30,
+			new(ReconcileHelm),
+			func(s string) {
+				cb.State(fmt.Sprintf("Step %q", step.Name), "Waiting for reconcile: "+s, start)
+			},
+		); err != nil {
+			return fmt.Errorf("failed to reconcile helm: %w", err)
+		}
 	}
 
 	cb.Completed(fmt.Sprintf("Deployed step %q", step.Name), time.Since(start))

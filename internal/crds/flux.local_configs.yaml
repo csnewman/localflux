@@ -224,6 +224,8 @@ spec:
                             x-kubernetes-preserve-unknown-fields: true
                           version:
                             type: string
+                          wait:
+                            type: boolean
                         required:
                         - chart
                         - version
@@ -307,6 +309,8 @@ spec:
                             additionalProperties:
                               type: string
                             type: object
+                          wait:
+                            type: boolean
                         required:
                         - context
                         type: object
