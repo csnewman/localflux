@@ -386,6 +386,8 @@ func (m *Manager) buildImages(
 
 			cb.BuildStatus(image.Image, nil)
 
+			cb.State("Building images", image.Image+" (uploading)", start)
+
 			img, err := crane.Load(artifact.File.Name())
 			if err != nil {
 				artifact.Delete()
