@@ -29,10 +29,14 @@ spec:
           clusters:
             description: Clusters is the list of clusters to connect to.
             items:
+              description: Cluster represents a kubernetes cluster. At present only
+                Minikube is supported.
               properties:
                 buildkit:
+                  description: BuildKit controls how images are built.
                   properties:
                     address:
+                      description: The buildkit builder address.
                       type: string
                     dockerConfig:
                       type: string
@@ -44,20 +48,30 @@ spec:
                 kubeConfig:
                   type: string
                 minikube:
+                  description: Minikube provides configuration for automatically starting
+                    a Minikube cluster.
                   properties:
                     addons:
+                      description: Addons is a list of minikube addons to enable.
                       items:
                         type: string
                       type: array
                     cni:
+                      description: CNI enables the provided CNI plugin. Necessary
+                        for netpols.
                       type: string
                     customArgs:
+                      description: CustomArgs are raw arguments to pass to the minikube
+                        start command.
                       items:
                         type: string
                       type: array
                     profile:
+                      description: Profile maps to "minikube --profile"
                       type: string
                     registryAliases:
+                      description: RegistryAliases is a list of hostnames to alias
+                        to the internal cluster registry.
                       items:
                         type: string
                       type: array
@@ -68,12 +82,20 @@ spec:
                   minLength: 1
                   type: string
                 relay:
+                  description: Relay provides port-forwarding capabilities.
                   properties:
                     clusterNetworking:
+                      description: ClusterNetworking controls whether to use host
+                        or cluster networking for the cluster side relay server.
                       type: boolean
                     disableClient:
+                      description: DisableClient prevents the host-side docker container
+                        being created. Use "localflux relay" instead.
                       type: boolean
                     enabled:
+                      description: |-
+                        Enabled causes the port forwarding in-cluster components to be deployed, alongside a docker container on the
+                        host to handle relaying.
                       type: boolean
                   required:
                   - enabled
@@ -90,33 +112,45 @@ spec:
             minLength: 1
             type: string
           deployments:
+            description: Deployments contains the list of possible deployments.
             items:
+              description: Deployment is a single deployment with multiple steps.
               properties:
                 images:
+                  description: Images is a list of images to build.
                   items:
+                    description: Image represents a single image to build.
                     properties:
                       buildArgs:
                         additionalProperties:
                           type: string
                         type: object
                       context:
+                        description: Context is the docker build context directory.
                         type: string
                       file:
+                        description: File is the Dockerfile to use inside the context.
                         type: string
                       image:
+                        description: Image is the fully qualified name for the image.
                         type: string
                       target:
+                        description: Target is the target inside the Dockerfile to
+                          build.
                         type: string
                     required:
                     - image
                     type: object
                   type: array
                 name:
-                  description: Name is the deployment name.
+                  description: |-
+                    Name is the deployment name. Used to specify this deployment from the command line. Localflux relies on this
+                    being a stable identifier.
                   maxLength: 63
                   minLength: 1
                   type: string
                 portForward:
+                  description: PortForward is a list of ports to forward to the cluster.
                   items:
                     properties:
                       kind:
@@ -141,9 +175,13 @@ spec:
                     type: object
                   type: array
                 steps:
+                  description: Steps are a list of actions to perform in order.
                   items:
+                    description: Step is a single action inside a deployment. Either
+                      kustomize or helm may be specified.
                     properties:
                       helm:
+                        description: Helm is a helm based action.
                         properties:
                           chart:
                             type: string
@@ -231,6 +269,7 @@ spec:
                         - version
                         type: object
                       kustomize:
+                        description: Kustomize is a kustomize based action.
                         properties:
                           components:
                             items:

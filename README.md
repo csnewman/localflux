@@ -12,6 +12,7 @@ Fast local k8s development using Flux CD & Minikube.
 
 1. [Golang](https://go.dev/) (with `.go/bin` in your `$PATH`)
 2. [Minikube](https://minikube.sigs.k8s.io/docs/start/)
+3. Docker
 
 ## 📦 Installation
 
@@ -19,6 +20,11 @@ To install `localflux`, simply:
 
 ```bash
 go install github.com/csnewman/localflux/cmd/localflux@latest
+```
+
+Ensure you have at least one buildkit builder:
+```bash
+docker buildx create
 ```
 
 ## 🪧 Usage
@@ -107,3 +113,5 @@ deployments:
         port: 8080
         localPort: 8081
 ```
+
+All configuration options can be found [here](https://github.com/csnewman/localflux/blob/master/internal/config/v1alpha1/config.go).
