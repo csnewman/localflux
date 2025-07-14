@@ -22,11 +22,6 @@ To install `localflux`, simply:
 go install github.com/csnewman/localflux/cmd/localflux@latest
 ```
 
-Ensure you have at least one buildkit builder:
-```bash
-docker buildx create
-```
-
 ## 🪧 Usage
 
 Clone demo:

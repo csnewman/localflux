@@ -3,15 +3,13 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/url"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/csnewman/localflux/internal/cluster"
 	"github.com/csnewman/localflux/internal/config"
 	dockerconfig "github.com/docker/cli/cli/config"
 	"github.com/docker/cli/cli/config/credentials"
@@ -21,7 +19,9 @@ import (
 	"github.com/moby/buildkit/cmd/buildctl/build"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/moby/buildkit/util/staticfs"
 	"github.com/tonistiigi/fsutil"
+	fstypes "github.com/tonistiigi/fsutil/types"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -45,16 +45,24 @@ type Builder struct {
 	attachable []session.Attachable
 }
 
-func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (*Builder, error) {
-	address := cfg.Address
+func NewBuilder(ctx context.Context, logger *slog.Logger, provider cluster.Provider) (*Builder, error) {
+	cfg := provider.BuildKitConfig()
 
-	if address == "" {
-		if _, err := exec.LookPath("docker"); err == nil {
-			address = "cmd://docker/buildx/dial-stdio"
-		}
+	addr := cfg.Address
+
+	const fallback = "localflux://fallback"
+
+	if addr == "" {
+		addr = fallback
 	}
 
-	c, err := client.New(ctx, address)
+	c, err := client.New(ctx, addr, client.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+		if addr == fallback {
+			addr = ""
+		}
+
+		return provider.BuildKitDialer(ctx, addr)
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to buildkit: %w", err)
 	}
@@ -88,12 +96,8 @@ func NewBuilder(ctx context.Context, logger *slog.Logger, cfg config.BuildKit) (
 }
 
 type Artifact struct {
-	File *os.File
-	Name string
-}
-
-func (a *Artifact) Delete() {
-	_ = os.Remove(a.File.Name())
+	Name   string
+	Digest string
 }
 
 type SolveStatus = client.SolveStatus
@@ -114,6 +118,14 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 		return nil, fmt.Errorf("invalid build context: %w", err)
 	}
 
+	cxtLocalMount, err = fsutil.NewFilterFS(cxtLocalMount, &fsutil.FilterOpt{
+		IncludePatterns: cfg.IncludePaths,
+		ExcludePatterns: cfg.ExcludePaths,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+
 	dockerfileLocalMount, err := fsutil.NewFS(filepath.Dir(buildFile))
 	if err != nil {
 		return nil, fmt.Errorf("invalid dockerfile path: %w", err)
@@ -132,20 +144,14 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 		frontendAttrs["build-arg:"+k] = v
 	}
 
-	tempFile, err := os.CreateTemp("", "localflux-build")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp file: %w", err)
-	}
-
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
-				Type: client.ExporterDocker,
+				Type: client.ExporterImage,
 				Attrs: map[string]string{
-					"name": cfg.Image,
-				},
-				Output: func(vals map[string]string) (io.WriteCloser, error) {
-					return tempFile, nil
+					"name":              cfg.Image,
+					"registry.insecure": "true",
+					"push":              "true",
 				},
 			},
 		},
@@ -184,17 +190,116 @@ func (b *Builder) Build(ctx context.Context, cfg config.Image, baseDir string, f
 	})
 
 	err = errgrp.Wait()
-
-	_ = tempFile.Close()
-
 	if err != nil {
-		_ = os.Remove(tempFile.Name())
-
-		return nil, fmt.Errorf("failed to solve build: %w", err)
+		return nil, err
 	}
 
+	b.logger.Info("Build complete", "response", resp.ExporterResponse)
+
 	return &Artifact{
-		File: tempFile,
-		Name: resp.ExporterResponse["image.name"],
+		Name:   resp.ExporterResponse["image.name"],
+		Digest: resp.ExporterResponse["containerimage.digest"],
+	}, nil
+}
+
+func (b *Builder) BuildOCI(
+	ctx context.Context,
+	baseDir string,
+	includePaths []string,
+	excludePaths []string,
+	image string,
+	fn func(res *SolveStatus),
+) (*Artifact, error) {
+	cxtLocalMount, err := fsutil.NewFS(baseDir)
+	if err != nil {
+		return nil, fmt.Errorf("invalid build context: %w", err)
+	}
+
+	if len(includePaths) == 0 {
+		includePaths = nil
+	}
+
+	if len(excludePaths) == 0 {
+		excludePaths = nil
+	}
+
+	cxtLocalMount, err = fsutil.NewFilterFS(cxtLocalMount, &fsutil.FilterOpt{
+		IncludePatterns: includePaths,
+		ExcludePatterns: excludePaths,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("invalid filter: %w", err)
+	}
+
+	dockerfileLocalMount := staticfs.NewFS()
+	dockerfileLocalMount.Add(
+		"Dockerfile",
+		&fstypes.Stat{
+			Mode: 0600,
+			Path: "Dockerfile",
+		},
+		[]byte(`FROM scratch
+COPY * .`),
+	)
+
+	solveOpt := client.SolveOpt{
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name":              image,
+					"registry.insecure": "true",
+					"push":              "true",
+					"oci-artifact":      "true",
+				},
+			},
+		},
+		LocalMounts: map[string]fsutil.FS{
+			"context":    cxtLocalMount,
+			"dockerfile": dockerfileLocalMount,
+		},
+		Frontend: "gateway.v0",
+		FrontendAttrs: map[string]string{
+			"source":   "docker/dockerfile",
+			"filename": "Dockerfile",
+		},
+		Session: b.attachable,
+	}
+
+	statusChan := make(chan *client.SolveStatus)
+
+	errgrp, gctx := errgroup.WithContext(ctx)
+
+	var resp *client.SolveResponse
+
+	errgrp.Go(func() error {
+		var err error
+
+		resp, err = b.c.Solve(gctx, nil, solveOpt, statusChan)
+
+		return err
+	})
+
+	errgrp.Go(func() error {
+		for {
+			ss, ok := <-statusChan
+			if !ok {
+				return nil
+			}
+
+			fn(ss)
+		}
+	})
+
+	err = errgrp.Wait()
+	if err != nil {
+		return nil, err
+	}
+
+	b.logger.Info("Build complete", "response", resp.ExporterResponse)
+
+	return &Artifact{
+		Name:   resp.ExporterResponse["image.name"],
+		Digest: resp.ExporterResponse["containerimage.digest"],
 	}, nil
 }

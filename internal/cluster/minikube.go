@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/docker/cli/cli/connhelper/commandconn"
 	"io"
 	"log/slog"
 	"net"
@@ -204,6 +205,15 @@ func (p *MinikubeProvider) BuildKitConfig() config.BuildKit {
 	}
 
 	return p.cfg.BuildKit
+}
+
+func (p *MinikubeProvider) BuildKitDialer(ctx context.Context, addr string) (net.Conn, error) {
+	cmd := []string{
+		"minikube", "--alsologtostderr", "ssh", "--native-ssh=false", "--profile", p.ProfileName(), "--",
+		"sudo", "buildctl", "dial-stdio",
+	}
+
+	return commandconn.New(context.Background(), cmd[0], cmd[1:]...)
 }
 
 func (p *MinikubeProvider) RelayConfig() config.Relay {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"regexp"
 	"slices"
@@ -21,12 +20,7 @@ import (
 	"github.com/fluxcd/pkg/apis/kustomize"
 	"github.com/fluxcd/pkg/apis/meta"
 	"github.com/fluxcd/pkg/chartutil"
-	ociclient "github.com/fluxcd/pkg/oci/client"
 	sourcev1b2 "github.com/fluxcd/source-controller/api/v1beta2"
-	"github.com/google/go-containerregistry/pkg/authn"
-	"github.com/google/go-containerregistry/pkg/crane"
-	conname "github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/uuid"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -120,12 +114,12 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 		return fmt.Errorf("%w: cluster is not in active state", ErrInvalidCluster)
 	}
 
-	regTrans, regAuth, err := provider.RegistryConn(ctx)
+	b, err := NewBuilder(ctx, m.logger, provider)
 	if err != nil {
-		return fmt.Errorf("failed to connect to cluster registry: %w", err)
+		return err
 	}
 
-	replacementImages, err := m.buildImages(ctx, deployment, provider, cb, regTrans, regAuth)
+	replacementImages, err := m.buildImages(ctx, deployment, b, cb)
 	if err != nil {
 		return fmt.Errorf("failed to build images: %w", err)
 	}
@@ -333,13 +327,13 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 
 	for _, step := range deployment.Steps {
 		if step.Kustomize != nil {
-			if err := m.deployKustomize(ctx, deployment, step, cb, regTrans, regAuth, provider, replacementImages, kc); err != nil {
+			if err := m.deployKustomize(ctx, deployment, step, cb, provider, b, replacementImages, kc); err != nil {
 				return fmt.Errorf("step %q failed: %w", step.Name, err)
 			}
 		}
 
 		if step.Helm != nil {
-			if err := m.deployHelm(ctx, deployment, step, cb, regTrans, regAuth, provider, replacementImages, kc); err != nil {
+			if err := m.deployHelm(ctx, deployment, step, cb, provider, b, replacementImages, kc); err != nil {
 				return fmt.Errorf("step %q failed: %w", step.Name, err)
 			}
 		}
@@ -355,17 +349,10 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 func (m *Manager) buildImages(
 	ctx context.Context,
 	deployment config.Deployment,
-	provider cluster.Provider,
+	builder *Builder,
 	cb Callbacks,
-	regTrans http.RoundTripper,
-	regAuth authn.Authenticator,
 ) ([]kustomize.Image, error) {
 	replacementImages := make([]kustomize.Image, 0, len(deployment.Images))
-
-	b, err := NewBuilder(ctx, m.logger, provider.BuildKitConfig())
-	if err != nil {
-		return nil, err
-	}
 
 	if len(deployment.Images) > 0 {
 		m.logger.Info("Building images")
@@ -377,7 +364,7 @@ func (m *Manager) buildImages(
 
 			cb.State("Building images", image.Image, start)
 
-			artifact, err := b.Build(ctx, image, "./", func(res *SolveStatus) {
+			artifact, err := builder.Build(ctx, image, "./", func(res *SolveStatus) {
 				cb.BuildStatus(image.Image, res)
 			})
 			if err != nil {
@@ -386,49 +373,10 @@ func (m *Manager) buildImages(
 
 			cb.BuildStatus(image.Image, nil)
 
-			cb.State("Building images", image.Image+" (uploading)", start)
-
-			img, err := crane.Load(artifact.File.Name())
-			if err != nil {
-				artifact.Delete()
-
-				return nil, fmt.Errorf("failed to load image: %w", err)
-			}
-
-			tag, err := conname.NewTag(image.Image, conname.Insecure)
-			if err != nil {
-				artifact.Delete()
-
-				return nil, fmt.Errorf("failed to create tag: %w", err)
-			}
-
-			h, err := img.Digest()
-			if err != nil {
-				artifact.Delete()
-
-				return nil, fmt.Errorf("failed to get image digest: %w", err)
-			}
-
-			m.logger.Info("Pushing image", "digest", h)
-
-			if err := remote.Push(
-				tag,
-				img,
-				remote.WithContext(ctx),
-				remote.WithTransport(regTrans),
-				remote.WithAuth(regAuth),
-			); err != nil {
-				artifact.Delete()
-
-				return nil, fmt.Errorf("pushing artifact failed: %w", err)
-			}
-
-			artifact.Delete()
-
 			replacementImages = append(replacementImages, kustomize.Image{
 				Name:    image.Image,
 				NewName: image.Image,
-				Digest:  h.String(),
+				Digest:  artifact.Digest,
 			})
 
 			cb.Completed(fmt.Sprintf("Built image %q", image.Image), time.Since(start))
@@ -449,9 +397,8 @@ func (m *Manager) deployKustomize(
 	deployment config.Deployment,
 	step config.Step,
 	cb Callbacks,
-	regTrans http.RoundTripper,
-	regAuth authn.Authenticator,
 	provider cluster.Provider,
+	builder *Builder,
 	replacementImages []kustomize.Image,
 	kc *cluster.K8sClient,
 ) error {
@@ -462,37 +409,28 @@ func (m *Manager) deployKustomize(
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Packaging manifests", start)
 
-	ociClient := ociclient.NewClient([]crane.Option{crane.WithTransport(regTrans), crane.WithAuth(regAuth), crane.Insecure})
-
 	remoteName := fixName(deployment.Name) + "-" + fixName(step.Name)
+	image := provider.Registry() + "/localflux/" + remoteName
 
-	manTag, err := conname.NewTag(provider.Registry() + "/localflux/" + remoteName)
-	if err != nil {
-		return fmt.Errorf("failed to create tag: %w", err)
-	}
-
-	pushedTag, err := ociClient.Push(
+	artifact, err := builder.BuildOCI(
 		ctx,
-		manTag.String(),
 		step.Kustomize.Context,
-		ociclient.WithPushIgnorePaths(step.Kustomize.IgnorePaths...),
-		ociclient.WithPushMetadata(ociclient.Metadata{
-			Source:  "localflux",
-			Created: time.Unix(0, 0).Format(time.RFC3339),
-		}),
+		step.Kustomize.IncludePaths,
+		step.Kustomize.ExcludePaths,
+		image,
+		func(res *SolveStatus) {
+			cb.BuildStatus("Manifests", res)
+		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to push manifests: %w", err)
+		return fmt.Errorf("failed to build image: %w", err)
 	}
+
+	cb.BuildStatus("Manifests", nil)
 
 	m.logger.Info("Deploying")
 
 	cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying namespace", start)
-
-	parsedDigest, err := conname.NewDigest(pushedTag)
-	if err != nil {
-		return fmt.Errorf("failed to parse pushed tag: %w", err)
-	}
 
 	if err := kc.CreateNamespace(ctx, cluster.LFNamespace); err != nil {
 		return fmt.Errorf("failed to create namespace: %w", err)
@@ -516,9 +454,9 @@ func (m *Manager) deployKustomize(
 			Namespace: cluster.LFNamespace,
 		},
 		Spec: sourcev1b2.OCIRepositorySpec{
-			URL: "oci://" + parsedDigest.Repository.String(),
+			URL: "oci://" + image,
 			Reference: &sourcev1b2.OCIRepositoryRef{
-				Digest: parsedDigest.DigestStr(),
+				Digest: artifact.Digest,
 			},
 			Interval: metav1.Duration{
 				Duration: time.Minute,
@@ -598,7 +536,16 @@ func (m *Manager) deployKustomize(
 	return nil
 }
 
-func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, step config.Step, cb Callbacks, regTrans http.RoundTripper, regAuth authn.Authenticator, provider cluster.Provider, replacementImages []kustomize.Image, kc *cluster.K8sClient) error {
+func (m *Manager) deployHelm(
+	ctx context.Context,
+	deployment config.Deployment,
+	step config.Step,
+	cb Callbacks,
+	provider cluster.Provider,
+	builder *Builder,
+	replacementImages []kustomize.Image,
+	kc *cluster.K8sClient,
+) error {
 	start := time.Now()
 
 	m.logger.Info("Executing step", "step", step.Name)
@@ -641,8 +588,6 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 	if err != nil {
 		return fmt.Errorf("failed to marshal values: %w", err)
 	}
-
-	ociClient := ociclient.NewClient([]crane.Option{crane.WithTransport(regTrans), crane.WithAuth(regAuth), crane.Insecure})
 
 	remoteName := fixName(deployment.Name) + "-" + fixName(step.Name)
 
@@ -704,29 +649,23 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 
 		cb.State(fmt.Sprintf("Step %q", step.Name), "Packaging chart", start)
 
-		manTag, err := conname.NewTag(provider.Registry() + "/localflux/" + remoteName)
-		if err != nil {
-			return fmt.Errorf("failed to create tag: %w", err)
-		}
+		image := provider.Registry() + "/localflux/" + remoteName
 
-		pushedTag, err := ociClient.Push(
+		artifact, err := builder.BuildOCI(
 			ctx,
-			manTag.String(),
 			step.Helm.Context,
-			ociclient.WithPushIgnorePaths(step.Helm.IgnorePaths...),
-			ociclient.WithPushMetadata(ociclient.Metadata{
-				Source:  "localflux",
-				Created: time.Unix(0, 0).Format(time.RFC3339),
-			}),
+			step.Helm.IncludePaths,
+			step.Helm.ExcludePaths,
+			image,
+			func(res *SolveStatus) {
+				cb.BuildStatus("Chart", res)
+			},
 		)
 		if err != nil {
-			return fmt.Errorf("failed to push manifests: %w", err)
+			return fmt.Errorf("failed to build image: %w", err)
 		}
 
-		parsedDigest, err := conname.NewDigest(pushedTag)
-		if err != nil {
-			return fmt.Errorf("failed to parse pushed tag: %w", err)
-		}
+		cb.BuildStatus("Chart", nil)
 
 		cb.State(fmt.Sprintf("Step %q", step.Name), "Deploying repo", start)
 
@@ -740,9 +679,9 @@ func (m *Manager) deployHelm(ctx context.Context, deployment config.Deployment, 
 				Namespace: cluster.LFNamespace,
 			},
 			Spec: sourcev1b2.OCIRepositorySpec{
-				URL: "oci://" + parsedDigest.Repository.String(),
+				URL: "oci://" + image,
 				Reference: &sourcev1b2.OCIRepositoryRef{
-					Digest: parsedDigest.DigestStr(),
+					Digest: artifact.Digest,
 				},
 				Interval: metav1.Duration{
 					Duration: time.Minute,

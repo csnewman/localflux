@@ -128,12 +128,20 @@ spec:
                       context:
                         description: Context is the docker build context directory.
                         type: string
+                      excludePaths:
+                        items:
+                          type: string
+                        type: array
                       file:
                         description: File is the Dockerfile to use inside the context.
                         type: string
                       image:
                         description: Image is the fully qualified name for the image.
                         type: string
+                      includePaths:
+                        items:
+                          type: string
+                        type: array
                       target:
                         description: Target is the target inside the Dockerfile to
                           build.
@@ -187,7 +195,11 @@ spec:
                             type: string
                           context:
                             type: string
-                          ignorePaths:
+                          excludePaths:
+                            items:
+                              type: string
+                            type: array
+                          includePaths:
                             items:
                               type: string
                             type: array
@@ -277,7 +289,11 @@ spec:
                             type: array
                           context:
                             type: string
-                          ignorePaths:
+                          excludePaths:
+                            items:
+                              type: string
+                            type: array
+                          includePaths:
                             items:
                               type: string
                             type: array

@@ -142,6 +142,10 @@ type Image struct {
 	// Context is the docker build context directory.
 	// +optional
 	Context string `json:"context"`
+	// +optional
+	IncludePaths []string `json:"includePaths"`
+	// +optional
+	ExcludePaths []string `json:"excludePaths"`
 	// File is the Dockerfile to use inside the context.
 	// +optional
 	File string `json:"file"`
@@ -168,7 +172,9 @@ type Step struct {
 type Kustomize struct {
 	Context string `json:"context"`
 	// +optional
-	IgnorePaths []string `json:"ignorePaths"`
+	IncludePaths []string `json:"includePaths"`
+	// +optional
+	ExcludePaths []string `json:"excludePaths"`
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +optional
@@ -192,9 +198,11 @@ type Helm struct {
 	// +optional
 	Context string `json:"context"`
 	// +optional
-	IgnorePaths []string `json:"ignorePaths"`
-	Chart       string   `json:"chart"`
-	Version     string   `json:"version"`
+	IncludePaths []string `json:"includePaths"`
+	// +optional
+	ExcludePaths []string `json:"excludePaths"`
+	Chart        string   `json:"chart"`
+	Version      string   `json:"version"`
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +optional

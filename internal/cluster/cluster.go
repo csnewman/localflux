@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -92,6 +93,8 @@ type Provider interface {
 	KubeConfig() string
 
 	BuildKitConfig() config.BuildKit
+
+	BuildKitDialer(ctx context.Context, addr string) (net.Conn, error)
 
 	RelayConfig() config.Relay
 
