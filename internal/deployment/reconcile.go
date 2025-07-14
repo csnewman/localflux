@@ -87,11 +87,8 @@ func Reconcile[T Reconcilable](
 		}
 
 		readyCond := apimeta.FindStatusCondition(obj.GetConditions(), meta.ReadyCondition)
-		if readyCond == nil {
-			return fmt.Errorf("status can't be determined")
-		}
 
-		if obj.GetLastHandledReconcileRequest() != tgt {
+		if readyCond == nil || obj.GetLastHandledReconcileRequest() != tgt {
 			cb("Awaiting attempt")
 
 			continue
