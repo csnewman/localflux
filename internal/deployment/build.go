@@ -239,7 +239,7 @@ func (b *Builder) BuildOCI(
 			Path: "Dockerfile",
 		},
 		[]byte(`FROM scratch
-COPY * .`),
+COPY . .`),
 	)
 
 	solveOpt := client.SolveOpt{
