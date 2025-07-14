@@ -90,6 +90,8 @@ type Provider interface {
 
 	ContextName() string
 
+	K8sClient(ctx context.Context) (*K8sClient, error)
+
 	KubeConfig() string
 
 	BuildKitConfig() config.BuildKit
@@ -226,7 +228,7 @@ func (m *Manager) Start(ctx context.Context, name string, cb Callbacks) error {
 
 	cb.Completed("Cluster configured", time.Since(start))
 
-	kc, err := NewK8sClientForCtx(p.KubeConfig(), p.ContextName())
+	kc, err := p.K8sClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client: %w", err)
 	}
@@ -341,7 +343,7 @@ func (m *Manager) Provider(name string) (Provider, error) {
 	}
 
 	if cfg.Minikube != nil {
-		mc := NewMinikube(m.logger)
+		mc := NewMinikube(m.logger, cfg.SSH)
 		mp := NewMinikubeProvider(m.logger, mc, cfg)
 
 		return mp, nil

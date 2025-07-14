@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/docker/cli/cli/connhelper/commandconn"
 	"io"
+	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,6 +30,7 @@ import (
 var (
 	ErrAddonNotFound = errors.New("addon not found")
 	ErrAddonFailed   = errors.New("addon failed")
+	ErrUnexpected    = errors.New("unexpected response")
 )
 
 type MinikubeProvider struct {
@@ -196,6 +198,10 @@ func (p *MinikubeProvider) ContextName() string {
 }
 
 func (p *MinikubeProvider) KubeConfig() string {
+	if p.cfg.SSH != nil {
+		panic("todo")
+	}
+
 	return p.cfg.KubeConfig
 }
 
@@ -208,10 +214,16 @@ func (p *MinikubeProvider) BuildKitConfig() config.BuildKit {
 }
 
 func (p *MinikubeProvider) BuildKitDialer(ctx context.Context, addr string) (net.Conn, error) {
-	cmd := []string{
+	var cmd []string
+
+	if p.cfg.SSH != nil {
+		cmd = append(cmd, "ssh", p.cfg.SSH.Address, "--")
+	}
+
+	cmd = append(cmd,
 		"minikube", "--alsologtostderr", "ssh", "--native-ssh=false", "--profile", p.ProfileName(), "--",
 		"sudo", "buildctl", "dial-stdio",
-	}
+	)
 
 	return commandconn.New(context.Background(), cmd[0], cmd[1:]...)
 }
@@ -221,10 +233,83 @@ func (p *MinikubeProvider) RelayConfig() config.Relay {
 		return &v1alpha1.Relay{}
 	}
 
+	if p.cfg.SSH != nil {
+		panic("todo")
+	}
+
 	return p.cfg.Relay
 }
 
+func (p *MinikubeProvider) K8sClient(ctx context.Context) (*K8sClient, error) {
+	if p.cfg.SSH == nil {
+		// TODO: use same minikube config approach
+		kc, err := NewK8sClientForCtx(p.KubeConfig(), p.ContextName())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create k8s client: %w", err)
+		}
+
+		return kc, nil
+	}
+
+	ctxName := p.ContextName()
+
+	raw, err := p.c.Config(ctx, p.ProfileName(), ctxName)
+	if err != nil {
+		panic(err)
+	}
+
+	p.logger.Debug("Raw k8s cfg", "raw", raw)
+
+	cfg, err := clientcmd.Load([]byte(raw))
+	if err != nil {
+		return nil, fmt.Errorf("config from bytes failed: %w", err)
+	}
+
+	loader := clientcmd.NewNonInteractiveClientConfig(
+		*cfg,
+		ctxName,
+		&clientcmd.ConfigOverrides{
+			CurrentContext: ctxName,
+		},
+		nil,
+	)
+
+	config, err := loader.ClientConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	config.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+		args := []string{
+			p.cfg.SSH.Address,
+			"--",
+			"socat",
+			"-",
+			network + ":" + address,
+		}
+
+		return commandconn.New(context.Background(), "ssh", args...)
+
+	}
+
+	rawConfig, err := loader.RawConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %w", err)
+	}
+
+	client, err := NewK8sClientFromConfig(config, rawConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create k8s client: %w", err)
+	}
+
+	return client, nil
+}
+
 func (p *MinikubeProvider) RelayK8Config(ctx context.Context) (*cmdapi.Config, error) {
+	if p.cfg.SSH != nil {
+		panic("todo")
+	}
+
 	ip, err := p.c.IP(ctx, p.ProfileName())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ip: %w", err)
@@ -265,6 +350,10 @@ func (p *MinikubeProvider) CNI() string {
 }
 
 func (p *MinikubeProvider) RegistryConn(ctx context.Context) (http.RoundTripper, authn.Authenticator, error) {
+	if p.cfg.SSH != nil {
+		panic("todo")
+	}
+
 	ip, err := p.c.IP(ctx, p.ProfileName())
 	if err != nil {
 		return nil, nil, err
@@ -295,12 +384,23 @@ func (p *MinikubeProvider) RegistryConn(ctx context.Context) (http.RoundTripper,
 
 type Minikube struct {
 	logger *slog.Logger
+	ssh    config.SSH
 }
 
-func NewMinikube(logger *slog.Logger) *Minikube {
+func NewMinikube(logger *slog.Logger, ssh config.SSH) *Minikube {
 	return &Minikube{
 		logger: logger,
+		ssh:    ssh,
 	}
+}
+
+func (m *Minikube) cmd(ctx context.Context) *exec.Cmd {
+	if m.ssh == nil {
+		return exec.CommandContext(ctx, "minikube")
+	}
+
+	return exec.CommandContext(ctx, "ssh", m.ssh.Address, "--", "minikube")
+
 }
 
 func (m *Minikube) Start(
@@ -312,7 +412,7 @@ func (m *Minikube) Start(
 ) error {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 
 	c.Args = append(c.Args, "start")
 
@@ -374,7 +474,7 @@ type rawProfile struct {
 func (m *Minikube) Profiles(ctx context.Context, cb ProviderCallbacks) (map[string]MinikubeProfile, error) {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 
 	c.Args = append(c.Args, "profile")
 	c.Args = append(c.Args, "list")
@@ -438,7 +538,7 @@ type rawAddon struct {
 func (m *Minikube) Addons(ctx context.Context, profile string) (map[string]bool, error) {
 	errgrp, ctx := errgroup.WithContext(ctx)
 
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 
 	c.Args = append(c.Args, "addons")
 	c.Args = append(c.Args, "list")
@@ -500,7 +600,7 @@ func (m *Minikube) Addons(ctx context.Context, profile string) (map[string]bool,
 }
 
 func (m *Minikube) EnableAddon(ctx context.Context, profile string, name string) error {
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 
 	c.Args = append(c.Args, "addons")
 	c.Args = append(c.Args, "enable")
@@ -533,8 +633,38 @@ func (m *Minikube) EnableAddon(ctx context.Context, profile string, name string)
 	return ErrAddonFailed
 }
 
+func (m *Minikube) Config(ctx context.Context, profile string, context string) (string, error) {
+	c := m.cmd(ctx)
+	if profile != "" {
+		c.Args = append(c.Args, "--profile", profile)
+	}
+
+	c.Args = append(c.Args, "kubectl", "--", "config", "view", "--flatten", "--minify", "--context", context)
+
+	buffer := bytes.NewBuffer(nil)
+	bufferErr := bytes.NewBuffer(nil)
+
+	c.Stdout = buffer
+	c.Stderr = bufferErr
+	c.Stdin = nil
+
+	if err := c.Run(); err != nil {
+		return "", err
+	}
+
+	text := buffer.String()
+
+	if strings.Contains(text, "clusters:") {
+		return text, nil
+	}
+
+	m.logger.Info("Unexpected output", "stdout", text, "stderr", bufferErr.String())
+
+	return "", ErrUnexpected
+}
+
 func (m *Minikube) ConfigureRegistryAliases(ctx context.Context, profile string, name string, values []string) error {
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 
 	c.Args = append(c.Args, "addons")
 	c.Args = append(c.Args, "configure")
@@ -569,7 +699,7 @@ func (m *Minikube) ConfigureRegistryAliases(ctx context.Context, profile string,
 }
 
 func (m *Minikube) IP(ctx context.Context, profile string) (net.IP, error) {
-	c := exec.CommandContext(ctx, "minikube")
+	c := m.cmd(ctx)
 	c.Args = append(c.Args, "ip")
 
 	if profile != "" {

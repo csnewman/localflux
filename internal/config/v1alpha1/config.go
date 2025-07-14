@@ -61,6 +61,9 @@ type Cluster struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
+	// SSH configures a remote provider via SSH. Experimental.
+	// +optional
+	SSH *SSH `json:"ssh"`
 	// Minikube provides configuration for automatically starting a Minikube cluster.
 	// +optional
 	Minikube *Minikube `json:"minikube"`
@@ -72,6 +75,11 @@ type Cluster struct {
 	// Relay provides port-forwarding capabilities.
 	// +optional
 	Relay *Relay `json:"relay"`
+}
+
+// SSH configures a remote provider.
+type SSH struct {
+	Address string `json:"address"`
 }
 
 // Minikube configures a local minikube cluster.

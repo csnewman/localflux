@@ -124,7 +124,7 @@ func (m *Manager) Deploy(ctx context.Context, clusterName string, name string, c
 		return fmt.Errorf("failed to build images: %w", err)
 	}
 
-	kc, err := cluster.NewK8sClientForCtx(provider.KubeConfig(), provider.ContextName())
+	kc, err := provider.K8sClient(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to create k8s client: %w", err)
 	}

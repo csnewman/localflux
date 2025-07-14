@@ -13,6 +13,7 @@ import (
 type (
 	Config     = *v1alpha1.Config
 	Cluster    = *v1alpha1.Cluster
+	SSH        = *v1alpha1.SSH
 	BuildKit   = *v1alpha1.BuildKit
 	Relay      = *v1alpha1.Relay
 	Image      = *v1alpha1.Image

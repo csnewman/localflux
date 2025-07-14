@@ -100,6 +100,14 @@ spec:
                   required:
                   - enabled
                   type: object
+                ssh:
+                  description: SSH configures a remote provider via SSH. Experimental.
+                  properties:
+                    address:
+                      type: string
+                  required:
+                  - address
+                  type: object
               required:
               - name
               type: object
